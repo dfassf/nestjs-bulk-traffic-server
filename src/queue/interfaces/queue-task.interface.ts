@@ -1,3 +1,10 @@
+export enum WorkloadType {
+  CPU = 'cpu',
+  MEMORY = 'memory',
+  CUSTOM = 'custom',
+  UNKNOWN = 'unknown',
+}
+
 export interface QueueTask {
   id: number;
   requestId?: number | string;
@@ -8,8 +15,7 @@ export interface QueueTask {
   priority: number;
   category?: string;
   size?: number;
-  isCpuIntensive?: boolean;
-  isMemoryIntensive?: boolean;
+  workloadType?: WorkloadType;
   params?: Record<string, unknown>;
   functionCode?: string;
   timeout?: number;
@@ -48,7 +54,7 @@ export interface QueueSnapshot {
 
 export interface WorkerTaskData {
   task: QueueTask;
-  type?: string;
+  type?: WorkloadType;
   operation?: string;
   params: Record<string, unknown>;
   functionCode?: string;
@@ -62,4 +68,7 @@ export interface EnqueueOptions {
   batch?: boolean;
   size?: number;
   timeout?: number;
+  workloadType?: WorkloadType | string;
+  params?: Record<string, unknown>;
+  functionCode?: string;
 }

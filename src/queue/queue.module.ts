@@ -3,10 +3,11 @@ import { QueueService } from './queue.service';
 import { MemoryService } from './memory.service';
 import { BatchService } from './batch.service';
 import { QueueStatsController } from './controllers/queue-stats.controller';
+import { WorkerPoolService } from './worker-pool.service';
 
 @Module({
   controllers: [QueueStatsController],
-  providers: [QueueService, MemoryService, BatchService],
-  exports: [QueueService, MemoryService],
+  providers: [QueueService, MemoryService, BatchService, WorkerPoolService],
+  exports: [QueueService, MemoryService, WorkerPoolService],
 })
 export class QueueModule {}

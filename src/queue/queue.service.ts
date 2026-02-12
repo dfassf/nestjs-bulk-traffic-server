@@ -8,9 +8,12 @@ import {
   QueueTask,
   TaskBatch,
   EnqueueOptions,
+  WorkerTaskData,
+  WorkloadType,
 } from './interfaces/queue-task.interface';
 import { MemoryService } from './memory.service';
 import { BatchService } from './batch.service';
+import { WorkerPoolService } from './worker-pool.service';
 
 @Injectable()
 export class QueueService implements OnModuleInit, OnModuleDestroy {
@@ -65,6 +68,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   private totalProcessed = 0;
   private totalRejected = 0;
   private totalTimeout = 0;
+  private workloadGeneralQueueFallbackCount = 0;
 
   private recentProcessed = 0;
   private recentRejected = 0;
@@ -78,10 +82,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly memoryService: MemoryService,
     private readonly batchService: BatchService,
+    private readonly workerPoolService: WorkerPoolService,
   ) {}
 
   async onModuleInit() {
     this.startProcessingIntervals();
+    this.workerPoolService.initWorkerPool((workerId, result) => {
+      this.handleWorkerResult(workerId, result);
+    });
     this.logger.log('큐 시스템 초기화 완료');
   }
 
@@ -90,6 +98,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     if (this.batchAgingTimer) clearInterval(this.batchAgingTimer);
     if (this.memoryCheckTimer) clearInterval(this.memoryCheckTimer);
     if (this.statsLogTimer) clearInterval(this.statsLogTimer);
+    void this.workerPoolService.destroy();
   }
 
   private readPositiveIntEnv(name: string, fallback: number): number {
@@ -230,14 +239,172 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       });
   }
 
+  private parsePositiveIntegerOption(
+    value: unknown,
+    optionName: string,
+    fallback: number,
+  ): number {
+    if (value === undefined || value === null) {
+      return fallback;
+    }
+
+    const parsed =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+          ? Number(value)
+          : Number.NaN;
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error(`${optionName} 값은 0보다 큰 정수여야 합니다.`);
+    }
+
+    return parsed;
+  }
+
+  private parsePriorityOption(value: unknown): number {
+    if (value === undefined || value === null) {
+      return 0;
+    }
+
+    const parsed =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+          ? Number(value)
+          : Number.NaN;
+    if (!Number.isInteger(parsed)) {
+      throw new Error('priority는 정수여야 합니다.');
+    }
+
+    return parsed;
+  }
+
+  private parseCategoryOption(value: unknown): string {
+    if (value === undefined || value === null) {
+      return 'default';
+    }
+
+    if (typeof value !== 'string') {
+      throw new Error('category는 문자열이어야 합니다.');
+    }
+
+    const normalized = value.trim();
+    if (!normalized) {
+      throw new Error('category는 빈 문자열일 수 없습니다.');
+    }
+
+    return normalized;
+  }
+
+  private parseParamsOption(value: unknown): Record<string, unknown> {
+    if (value === undefined || value === null) {
+      return {};
+    }
+
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('params는 객체 형태여야 합니다.');
+    }
+
+    return value as Record<string, unknown>;
+  }
+
+  private parseFunctionCodeOption(value: unknown): string | undefined {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+
+    if (typeof value !== 'string') {
+      throw new Error('functionCode는 문자열이어야 합니다.');
+    }
+
+    return value;
+  }
+
+  private parseWorkloadTypeOption(value: unknown): WorkloadType | undefined {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+
+    if (typeof value !== 'string') {
+      throw new Error('workloadType은 문자열이어야 합니다.');
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (normalized === WorkloadType.CPU) return WorkloadType.CPU;
+    if (normalized === WorkloadType.MEMORY) return WorkloadType.MEMORY;
+    if (normalized === WorkloadType.CUSTOM) return WorkloadType.CUSTOM;
+    if (normalized === WorkloadType.UNKNOWN) {
+      this.workloadGeneralQueueFallbackCount++;
+      return WorkloadType.UNKNOWN;
+    }
+
+    this.workloadGeneralQueueFallbackCount++;
+    this.logger.warn(
+      `알 수 없는 workloadType(${value}) 입력으로 일반 큐 처리로 fallback 합니다.`,
+    );
+    return WorkloadType.UNKNOWN;
+  }
+
+  private normalizeEnqueueOptions(options: EnqueueOptions): {
+    priority: number;
+    category: string;
+    size: number;
+    timeout: number;
+    workloadType?: WorkloadType;
+    params: Record<string, unknown>;
+    functionCode?: string;
+    batch: boolean;
+    requestId?: string | number;
+  } {
+    return {
+      priority: this.parsePriorityOption(options.priority),
+      category: this.parseCategoryOption(options.category),
+      size: this.parsePositiveIntegerOption(options.size, 'size', 1),
+      timeout: this.parsePositiveIntegerOption(
+        options.timeout,
+        'timeout',
+        this.executionTimeoutMs,
+      ),
+      workloadType: this.parseWorkloadTypeOption(options.workloadType),
+      params: this.parseParamsOption(options.params),
+      functionCode: this.parseFunctionCodeOption(options.functionCode),
+      batch: options.batch === true,
+      requestId: options.requestId,
+    };
+  }
+
+  private isWorkerEligibleTask(task: QueueTask): boolean {
+    if (!this.workerPoolService.isEnabled) return false;
+    if (task.priority < 0) return false;
+    return (
+      task.workloadType === WorkloadType.CPU ||
+      task.workloadType === WorkloadType.MEMORY ||
+      task.workloadType === WorkloadType.CUSTOM
+    );
+  }
+
+  private createWorkerTaskData(task: QueueTask): WorkerTaskData {
+    return {
+      task,
+      type: task.workloadType,
+      params: task.params || {},
+      functionCode: task.functionCode,
+      timeout: task.timeout,
+    };
+  }
+
+  private onWorkerTaskDispatchFailed = (): void => {
+    this.activeRequests = Math.max(0, this.activeRequests - 1);
+    this.incrementRejected();
+    this.requestProcessQueue();
+  };
+
   async enqueue<T>(
     execute: () => Promise<T>,
     options: EnqueueOptions = {},
   ): Promise<T> {
-    const priority = options.priority ?? 0;
-    const category = options.category || 'default';
-    const size = options.size ?? 1;
-    const timeout = options.timeout ?? this.executionTimeoutMs;
+    const normalized = this.normalizeEnqueueOptions(options);
+    const { priority, category, size, timeout } = normalized;
 
     if (this.memoryService.memoryPressure && priority < 0) {
       this.incrementRejected();
@@ -252,7 +419,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     return new Promise<T>((resolve, reject) => {
       const task: QueueTask = {
         id: ++this.taskIdCounter,
-        requestId: options.requestId,
+        requestId: normalized.requestId,
         execute: this.withExecutionTimeout(execute, timeout),
         resolve: resolve as (value: unknown) => void,
         reject,
@@ -260,6 +427,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         priority,
         category,
         size,
+        workloadType: normalized.workloadType,
+        params: normalized.params,
+        functionCode: normalized.functionCode,
         timeout,
       };
 
@@ -284,7 +454,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       };
 
       if (
-        options.batch &&
+        normalized.batch &&
         this.batchService.shouldAddToBatch(task, this.batchQueues)
       ) {
         this.batchService.addTaskToBatch(
@@ -310,6 +480,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     this.isProcessingQueue = true;
     let processed = 0;
+    let workerDispatchCount = 0;
 
     try {
       const availableSlots = Math.min(
@@ -330,8 +501,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           const task = queue.shift();
           if (!task) continue;
 
-          processed++;
+          if (this.isWorkerEligibleTask(task)) {
+            this.activeRequests++;
+            processed++;
+            workerDispatchCount++;
+            this.workerPoolService.addTask(this.createWorkerTaskData(task));
+            continue;
+          }
+
           this.activeRequests++;
+          processed++;
 
           Promise.resolve()
             .then(() => task.execute())
@@ -349,6 +528,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         }
 
         if (processed >= availableSlots) break;
+      }
+
+      if (workerDispatchCount > 0) {
+        this.workerPoolService.processWorkerTasks(this.onWorkerTaskDispatchFailed);
       }
     } finally {
       this.isProcessingQueue = false;
@@ -377,6 +560,32 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         }
       },
     );
+  }
+
+  private handleWorkerResult(
+    workerId: number,
+    result: {
+      success?: boolean;
+      result?: unknown;
+      error?: string;
+    },
+  ): void {
+    this.workerPoolService.handleWorkerResult(
+      workerId,
+      result,
+      () => {
+        this.incrementProcessed();
+        this.activeRequests = Math.max(0, this.activeRequests - 1);
+        this.requestProcessQueue();
+      },
+      () => {
+        this.incrementRejected();
+        this.activeRequests = Math.max(0, this.activeRequests - 1);
+        this.requestProcessQueue();
+      },
+    );
+
+    this.workerPoolService.processWorkerTasks(this.onWorkerTaskDispatchFailed);
   }
 
   private removeTaskFromQueues(task: QueueTask): boolean {
@@ -413,7 +622,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   private logStats(): void {
     this.logger.log(
-      `[1분 통계] 처리: ${this.recentProcessed}, 거부: ${this.recentRejected}, 타임아웃: ${this.recentTimeout}, 활성: ${this.activeRequests}, 큐 길이: ${this.getTotalQueueLength()} / 누적 처리: ${this.totalProcessed}`,
+      `[1분 통계] 처리: ${this.recentProcessed}, 거부: ${this.recentRejected}, 타임아웃: ${this.recentTimeout}, 활성: ${this.activeRequests}, 큐 길이: ${this.getTotalQueueLength()} / 누적 처리: ${this.totalProcessed}, unknown fallback: ${this.workloadGeneralQueueFallbackCount}`,
     );
 
     this.recentProcessed = 0;
@@ -435,10 +644,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       totalProcessed: this.totalProcessed,
       totalRejected: this.totalRejected,
       totalTimeout: this.totalTimeout,
+      workloadGeneralQueueFallbackCount: this.workloadGeneralQueueFallbackCount,
       recentProcessed: this.recentProcessed,
       recentRejected: this.recentRejected,
       recentTimeout: this.recentTimeout,
       memoryPressure: this.memoryService.memoryPressure,
+      workerPool: this.workerPoolService.getPoolStats(),
     };
   }
 }

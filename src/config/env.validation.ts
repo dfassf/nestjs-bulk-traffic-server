@@ -13,6 +13,8 @@ const POSITIVE_INT_KEYS = [
   'QUEUE_PROCESS_INTERVAL_MS',
   'QUEUE_MEMORY_CHECK_INTERVAL_MS',
   'QUEUE_STATS_LOG_INTERVAL_MS',
+  'QUEUE_SNAPSHOT_INTERVAL_MS',
+  'QUEUE_SNAPSHOT_MAX_AGE_MS',
   'WORKER_POOL_SIZE',
   'WORKER_MAX_CPU_CONCURRENCY',
   'WORKER_MAX_MEMORY_CONCURRENCY',
@@ -42,6 +44,20 @@ export function validateEnv(config: EnvMap): EnvMap {
     disableWorkers !== 'false'
   ) {
     throw new Error('DISABLE_WORKERS는 true 또는 false 문자열이어야 합니다.');
+  }
+
+  const queuePersistence = config.QUEUE_PERSISTENCE;
+  if (
+    queuePersistence !== undefined &&
+    queuePersistence !== 'file' &&
+    queuePersistence !== 'none'
+  ) {
+    throw new Error('QUEUE_PERSISTENCE는 file 또는 none 문자열이어야 합니다.');
+  }
+
+  const snapshotPath = config.QUEUE_SNAPSHOT_PATH;
+  if (snapshotPath !== undefined && typeof snapshotPath !== 'string') {
+    throw new Error('QUEUE_SNAPSHOT_PATH는 문자열이어야 합니다.');
   }
 
   const allowedOrigins = config.ALLOWED_ORIGINS;

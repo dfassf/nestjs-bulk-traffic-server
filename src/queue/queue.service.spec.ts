@@ -243,6 +243,8 @@ describe('QueueService', () => {
       expect(stats).toHaveProperty('batchTaskCount');
       expect(stats).toHaveProperty('activeRequests');
       expect(stats).toHaveProperty('memoryPressure');
+      expect(stats).toHaveProperty('persistence');
+      expect(stats.persistence.enabled).toBe(false);
       expect(stats.highPriorityQueueLength).toBe(0);
       expect(stats.normalPriorityQueueLength).toBe(0);
       expect(stats.lowPriorityQueueLength).toBe(0);

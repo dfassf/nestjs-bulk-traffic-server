@@ -1,4 +1,5 @@
 const { parentPort } = require('worker_threads');
+const ALLOW_CUSTOM_WORKLOAD = process.env.ALLOW_CUSTOM_WORKLOAD === 'true';
 
 const DEFAULT_TIMEOUTS = {
   cpu: 30000,
@@ -137,6 +138,10 @@ const processors = {
 
   custom: {
     execute: (params, functionCode) => {
+      if (!ALLOW_CUSTOM_WORKLOAD) {
+        return { error: 'custom workload 기능이 비활성화되어 있습니다' };
+      }
+
       if (!functionCode) {
         return { error: '실행할 함수 코드가 제공되지 않았습니다' };
       }

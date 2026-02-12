@@ -4,15 +4,17 @@ import { FilePersistenceService } from './file-persistence.service';
 
 @Module({
   providers: [
+    FilePersistenceService,
     {
       provide: QUEUE_PERSISTENCE,
-      useFactory: () => {
+      useFactory: (filePersistenceService: FilePersistenceService) => {
         const mode = process.env.QUEUE_PERSISTENCE;
         if (mode === 'file') {
-          return new FilePersistenceService();
+          return filePersistenceService;
         }
         return null;
       },
+      inject: [FilePersistenceService],
     },
   ],
   exports: [QUEUE_PERSISTENCE],

@@ -72,6 +72,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     'QUEUE_SNAPSHOT_INTERVAL_MS',
     30000,
   );
+  private readonly allowCustomWorkload =
+    process.env.ALLOW_CUSTOM_WORKLOAD === 'true';
 
   private taskIdCounter = 0;
   private activeRequests = 0;
@@ -117,14 +119,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     this.logger.log('큐 시스템 초기화 완료');
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
     if (this.queueProcessTimer) clearInterval(this.queueProcessTimer);
     if (this.batchAgingTimer) clearInterval(this.batchAgingTimer);
     if (this.memoryCheckTimer) clearInterval(this.memoryCheckTimer);
     if (this.statsLogTimer) clearInterval(this.statsLogTimer);
     if (this.snapshotTimer) clearInterval(this.snapshotTimer);
-    void this.saveSnapshot();
-    void this.workerPoolService.destroy();
+    await this.saveSnapshot();
+    await this.workerPoolService.destroy();
   }
 
   private readPositiveIntEnv(name: string, fallback: number): number {
@@ -281,6 +283,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.totalRejected = snapshot.stats.totalRejected;
       this.totalTimeout = snapshot.stats.totalTimeout;
       this.taskIdCounter = snapshot.stats.taskIdCounter;
+      this.lastSnapshotAt = snapshot.timestamp;
 
       const queuedTaskCount =
         snapshot.queues.high.length +
@@ -294,6 +297,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `큐 스냅샷 복구 완료 (processed=${this.totalProcessed}, rejected=${this.totalRejected}, timeout=${this.totalTimeout})`,
       );
+
+      try {
+        await this.queuePersistence.clearSnapshot();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`복구된 큐 스냅샷 정리 실패: ${message}`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`큐 스냅샷 복구 실패: ${message}`);
@@ -409,6 +419,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       throw new Error('functionCode는 문자열이어야 합니다.');
     }
 
+    if (!this.allowCustomWorkload) {
+      throw new Error('custom workload 기능이 비활성화되어 있습니다.');
+    }
+
     return value;
   }
 
@@ -424,7 +438,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     const normalized = value.trim().toLowerCase();
     if (normalized === WorkloadType.CPU) return WorkloadType.CPU;
     if (normalized === WorkloadType.MEMORY) return WorkloadType.MEMORY;
-    if (normalized === WorkloadType.CUSTOM) return WorkloadType.CUSTOM;
+    if (normalized === WorkloadType.CUSTOM) {
+      if (!this.allowCustomWorkload) {
+        throw new Error('custom workload 기능이 비활성화되어 있습니다.');
+      }
+      return WorkloadType.CUSTOM;
+    }
     if (normalized === WorkloadType.UNKNOWN) {
       this.workloadGeneralQueueFallbackCount++;
       return WorkloadType.UNKNOWN;

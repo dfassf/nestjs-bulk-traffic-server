@@ -11,6 +11,7 @@ describe('validateEnv', () => {
         QUEUE_SNAPSHOT_MAX_AGE_MS: '300000',
         QUEUE_PERSISTENCE: 'file',
         QUEUE_SNAPSHOT_PATH: '.queue-snapshot.json',
+        ALLOW_CUSTOM_WORKLOAD: 'false',
         WORKER_POOL_SIZE: '4',
         WORKER_MAX_CPU_CONCURRENCY: '4',
         WORKER_MAX_MEMORY_CONCURRENCY: '2',
@@ -41,6 +42,16 @@ describe('validateEnv', () => {
         DISABLE_WORKERS: '1',
       }),
     ).toThrow('DISABLE_WORKERS는 true 또는 false 문자열이어야 합니다.');
+  });
+
+  it('ALLOW_CUSTOM_WORKLOAD 값이 true/false가 아니면 예외를 던져야 한다', () => {
+    expect(() =>
+      validateEnv({
+        ALLOW_CUSTOM_WORKLOAD: '1',
+      }),
+    ).toThrow(
+      'ALLOW_CUSTOM_WORKLOAD는 true 또는 false 문자열이어야 합니다.',
+    );
   });
 
   it('QUEUE_PERSISTENCE 값이 file/none이 아니면 예외를 던져야 한다', () => {

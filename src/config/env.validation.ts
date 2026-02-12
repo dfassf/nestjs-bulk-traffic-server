@@ -46,6 +46,17 @@ export function validateEnv(config: EnvMap): EnvMap {
     throw new Error('DISABLE_WORKERS는 true 또는 false 문자열이어야 합니다.');
   }
 
+  const allowCustomWorkload = config.ALLOW_CUSTOM_WORKLOAD;
+  if (
+    allowCustomWorkload !== undefined &&
+    allowCustomWorkload !== 'true' &&
+    allowCustomWorkload !== 'false'
+  ) {
+    throw new Error(
+      'ALLOW_CUSTOM_WORKLOAD는 true 또는 false 문자열이어야 합니다.',
+    );
+  }
+
   const queuePersistence = config.QUEUE_PERSISTENCE;
   if (
     queuePersistence !== undefined &&

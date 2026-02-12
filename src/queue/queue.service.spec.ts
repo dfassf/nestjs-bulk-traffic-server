@@ -6,6 +6,8 @@ import { WorkerPoolService } from './worker-pool.service';
 import { QueueTask, WorkloadType } from './interfaces/queue-task.interface';
 
 describe('QueueService', () => {
+  const originalAllowCustomWorkload = process.env.ALLOW_CUSTOM_WORKLOAD;
+
   let service: QueueService;
   let memoryService: MemoryService;
   let workerPoolService: WorkerPoolService;
@@ -22,6 +24,8 @@ describe('QueueService', () => {
   });
 
   beforeEach(async () => {
+    process.env.ALLOW_CUSTOM_WORKLOAD = 'false';
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [QueueService, MemoryService, BatchService, WorkerPoolService],
     }).compile();
@@ -31,10 +35,14 @@ describe('QueueService', () => {
     workerPoolService = module.get<WorkerPoolService>(WorkerPoolService);
   });
 
-  afterEach(() => {
-    service.onModuleDestroy();
+  afterEach(async () => {
+    await service.onModuleDestroy();
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  afterAll(() => {
+    process.env.ALLOW_CUSTOM_WORKLOAD = originalAllowCustomWorkload;
   });
 
   describe('enqueue', () => {
@@ -183,6 +191,34 @@ describe('QueueService', () => {
       ).rejects.toThrow('size 값은 0보다 큰 정수여야 합니다.');
     });
 
+    it('custom workload 비활성화 시 functionCode 입력은 거부되어야 한다', async () => {
+      await expect(
+        service.enqueue(() => Promise.resolve('blocked'), {
+          workloadType: WorkloadType.CUSTOM,
+          functionCode: 'return 1;',
+        }),
+      ).rejects.toThrow('custom workload 기능이 비활성화되어 있습니다.');
+    });
+
+    it('custom workload 활성화 시 functionCode 입력을 허용해야 한다', async () => {
+      process.env.ALLOW_CUSTOM_WORKLOAD = 'true';
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [QueueService, MemoryService, BatchService, WorkerPoolService],
+      }).compile();
+
+      const enabledService = module.get<QueueService>(QueueService);
+      const promise = enabledService.enqueue(() => Promise.resolve('ok'), {
+        workloadType: WorkloadType.CUSTOM,
+        functionCode: 'return 1;',
+      });
+
+      (enabledService as any).processQueue();
+      await expect(promise).resolves.toBe('ok');
+      await enabledService.onModuleDestroy();
+
+      process.env.ALLOW_CUSTOM_WORKLOAD = 'false';
+    });
+
     it('배치 작업이 대기 타임아웃되면 배치 큐에서도 제거되어야 한다', async () => {
       jest.useFakeTimers();
 
@@ -227,7 +263,7 @@ describe('QueueService', () => {
       const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
 
       await service.onModuleInit();
-      service.onModuleDestroy();
+      await service.onModuleDestroy();
 
       expect(clearIntervalSpy).toHaveBeenCalledTimes(4);
     });

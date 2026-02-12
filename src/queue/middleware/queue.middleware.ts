@@ -27,6 +27,8 @@ export class QueueMiddleware implements NestMiddleware {
   private readonly requestStateMap = new Map<string, RequestState>();
   private readonly requestProcessingTimeoutMs = 10000;
   private readonly requestStateTtlMs = 30000;
+  private readonly allowCustomWorkload =
+    process.env.ALLOW_CUSTOM_WORKLOAD === 'true';
 
   constructor(private readonly queueService: QueueService) {}
 
@@ -51,6 +53,17 @@ export class QueueMiddleware implements NestMiddleware {
           res.status(503).send({
             error: '서비스 과부하',
             message: '서버가 과부하 상태입니다. 잠시 후 다시 시도해주세요.',
+          });
+        }
+        return;
+      }
+
+      if (decision.functionCode && !this.allowCustomWorkload) {
+        this.markResponded(requestId);
+        if (!res.headersSent) {
+          res.status(403).send({
+            error: '기능 비활성화',
+            message: 'custom workload 기능이 비활성화되어 있습니다.',
           });
         }
         return;
@@ -82,10 +95,25 @@ export class QueueMiddleware implements NestMiddleware {
       const message = error instanceof Error ? error.message : '알 수 없는 오류';
       this.logger.error(`[${requestId}] 큐 처리 중 오류: ${message}`);
 
+      const isCustomDisabled = message.includes(
+        'custom workload 기능이 비활성화',
+      );
+      const isValidationError =
+        message.includes('문자열이어야') ||
+        message.includes('정수여야') ||
+        message.includes('빈 문자열') ||
+        message.includes('값은 0보다 큰 정수');
+      const statusCode = isCustomDisabled ? 403 : isValidationError ? 400 : 503;
+      const errorCode = isCustomDisabled
+        ? '기능 비활성화'
+        : isValidationError
+          ? '잘못된 요청'
+          : '서비스 일시적으로 사용 불가';
+
       if (!this.hasResponded(requestId) && !res.headersSent) {
         this.markResponded(requestId);
-        res.status(503).send({
-          error: '서비스 일시적으로 사용 불가',
+        res.status(statusCode).send({
+          error: errorCode,
           message,
         });
       }

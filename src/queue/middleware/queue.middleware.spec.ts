@@ -38,10 +38,14 @@ const createRequest = (overrides: Partial<Request> = {}): Request =>
   }) as Request;
 
 describe('QueueMiddleware', () => {
+  const originalAllowCustomWorkload = process.env.ALLOW_CUSTOM_WORKLOAD;
+
   let middleware: QueueMiddleware;
   let queueService: QueueServiceMock;
 
   beforeEach(() => {
+    process.env.ALLOW_CUSTOM_WORKLOAD = 'false';
+
     queueService = {
       enqueue: jest.fn(),
       getQueueStats: jest.fn().mockReturnValue({ memoryPressure: false }),
@@ -52,6 +56,10 @@ describe('QueueMiddleware', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  afterAll(() => {
+    process.env.ALLOW_CUSTOM_WORKLOAD = originalAllowCustomWorkload;
   });
 
   it('헬스체크 경로는 큐를 우회해야 한다', async () => {
@@ -106,6 +114,9 @@ describe('QueueMiddleware', () => {
   });
 
   it('요청 body의 workloadType과 functionCode를 큐 옵션으로 전달해야 한다', async () => {
+    process.env.ALLOW_CUSTOM_WORKLOAD = 'true';
+    middleware = new QueueMiddleware(queueService as unknown as QueueService);
+
     const req = createRequest({
       method: 'POST',
       path: '/api/tasks/execute',
@@ -131,5 +142,27 @@ describe('QueueMiddleware', () => {
     expect(options.workloadType).toBe('custom');
     expect(options.functionCode).toBe('return params.a + params.b;');
     expect(options.params).toEqual({ a: 1, b: 2 });
+  });
+
+  it('custom workload 비활성화 상태에서는 functionCode 요청을 거부해야 한다', async () => {
+    process.env.ALLOW_CUSTOM_WORKLOAD = 'false';
+    middleware = new QueueMiddleware(queueService as unknown as QueueService);
+
+    const req = createRequest({
+      method: 'POST',
+      path: '/api/tasks/execute',
+      url: '/api/tasks/execute',
+      body: {
+        functionCode: 'return 1;',
+      },
+    });
+    const res = createResponse();
+    const next: NextFunction = jest.fn();
+
+    await middleware.use(req, res, next);
+
+    expect(queueService.enqueue).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
   });
 });

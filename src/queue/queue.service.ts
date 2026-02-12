@@ -1,8 +1,10 @@
 import {
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import {
   QueueTask,
@@ -10,10 +12,15 @@ import {
   EnqueueOptions,
   WorkerTaskData,
   WorkloadType,
+  SerializedTask,
 } from './interfaces/queue-task.interface';
 import { MemoryService } from './memory.service';
 import { BatchService } from './batch.service';
 import { WorkerPoolService } from './worker-pool.service';
+import {
+  QUEUE_PERSISTENCE,
+  QueuePersistence,
+} from './persistence/persistence.interface';
 
 @Injectable()
 export class QueueService implements OnModuleInit, OnModuleDestroy {
@@ -61,6 +68,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     'QUEUE_STATS_LOG_INTERVAL_MS',
     60000,
   );
+  private readonly snapshotIntervalMs = this.readPositiveIntEnv(
+    'QUEUE_SNAPSHOT_INTERVAL_MS',
+    30000,
+  );
 
   private taskIdCounter = 0;
   private activeRequests = 0;
@@ -78,18 +89,31 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   private batchAgingTimer: ReturnType<typeof setInterval> | null = null;
   private memoryCheckTimer: ReturnType<typeof setInterval> | null = null;
   private statsLogTimer: ReturnType<typeof setInterval> | null = null;
+  private snapshotTimer: ReturnType<typeof setInterval> | null = null;
+  private lastSnapshotAt: number | null = null;
 
   constructor(
     private readonly memoryService: MemoryService,
     private readonly batchService: BatchService,
     private readonly workerPoolService: WorkerPoolService,
+    @Optional() @Inject(QUEUE_PERSISTENCE)
+    private readonly queuePersistence: QueuePersistence | null,
   ) {}
 
   async onModuleInit() {
+    await this.restoreSnapshot();
     this.startProcessingIntervals();
     this.workerPoolService.initWorkerPool((workerId, result) => {
       this.handleWorkerResult(workerId, result);
     });
+
+    if (this.queuePersistence) {
+      this.snapshotTimer = setInterval(() => {
+        void this.saveSnapshot();
+      }, this.snapshotIntervalMs);
+      this.logger.log(`큐 영속성 활성화 (스냅샷 주기: ${this.snapshotIntervalMs}ms)`);
+    }
+
     this.logger.log('큐 시스템 초기화 완료');
   }
 
@@ -98,6 +122,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     if (this.batchAgingTimer) clearInterval(this.batchAgingTimer);
     if (this.memoryCheckTimer) clearInterval(this.memoryCheckTimer);
     if (this.statsLogTimer) clearInterval(this.statsLogTimer);
+    if (this.snapshotTimer) clearInterval(this.snapshotTimer);
+    void this.saveSnapshot();
     void this.workerPoolService.destroy();
   }
 
@@ -206,6 +232,72 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.lowPriorityQueue.length +
       this.getBatchTaskCount()
     );
+  }
+
+  private serializeQueue(queue: QueueTask[]): SerializedTask[] {
+    return queue.map((task) => ({
+      id: task.id,
+      requestId: task.requestId,
+      timestamp: task.timestamp,
+      priority: task.priority,
+      category: task.category,
+      size: task.size,
+    }));
+  }
+
+  private async saveSnapshot(): Promise<void> {
+    if (!this.queuePersistence) return;
+
+    try {
+      await this.queuePersistence.saveSnapshot({
+        timestamp: Date.now(),
+        queues: {
+          high: this.serializeQueue(this.highPriorityQueue),
+          normal: this.serializeQueue(this.normalPriorityQueue),
+          low: this.serializeQueue(this.lowPriorityQueue),
+        },
+        stats: {
+          totalProcessed: this.totalProcessed,
+          totalRejected: this.totalRejected,
+          totalTimeout: this.totalTimeout,
+          taskIdCounter: this.taskIdCounter,
+        },
+      });
+      this.lastSnapshotAt = Date.now();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`큐 스냅샷 저장 실패: ${message}`);
+    }
+  }
+
+  private async restoreSnapshot(): Promise<void> {
+    if (!this.queuePersistence) return;
+
+    try {
+      const snapshot = await this.queuePersistence.loadSnapshot();
+      if (!snapshot) return;
+
+      this.totalProcessed = snapshot.stats.totalProcessed;
+      this.totalRejected = snapshot.stats.totalRejected;
+      this.totalTimeout = snapshot.stats.totalTimeout;
+      this.taskIdCounter = snapshot.stats.taskIdCounter;
+
+      const queuedTaskCount =
+        snapshot.queues.high.length +
+        snapshot.queues.normal.length +
+        snapshot.queues.low.length;
+      if (queuedTaskCount > 0) {
+        this.logger.warn(
+          `스냅샷의 대기 작업 ${queuedTaskCount}개는 실행 함수가 없어 복구하지 않습니다.`,
+        );
+      }
+      this.logger.log(
+        `큐 스냅샷 복구 완료 (processed=${this.totalProcessed}, rejected=${this.totalRejected}, timeout=${this.totalTimeout})`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`큐 스냅샷 복구 실패: ${message}`);
+    }
   }
 
   private withExecutionTimeout<T>(
@@ -650,6 +742,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       recentTimeout: this.recentTimeout,
       memoryPressure: this.memoryService.memoryPressure,
       workerPool: this.workerPoolService.getPoolStats(),
+      persistence: {
+        enabled: Boolean(this.queuePersistence),
+        snapshotIntervalMs: this.queuePersistence ? this.snapshotIntervalMs : null,
+        lastSnapshotAt: this.lastSnapshotAt,
+      },
     };
   }
 }

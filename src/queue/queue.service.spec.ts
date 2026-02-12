@@ -2,11 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { QueueService } from './queue.service';
 import { MemoryService } from './memory.service';
 import { BatchService } from './batch.service';
-import { QueueTask } from './interfaces/queue-task.interface';
+import { WorkerPoolService } from './worker-pool.service';
+import { QueueTask, WorkloadType } from './interfaces/queue-task.interface';
 
 describe('QueueService', () => {
   let service: QueueService;
   let memoryService: MemoryService;
+  let workerPoolService: WorkerPoolService;
 
   const createTask = (id: number): QueueTask => ({
     id,
@@ -21,11 +23,12 @@ describe('QueueService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [QueueService, MemoryService, BatchService],
+      providers: [QueueService, MemoryService, BatchService, WorkerPoolService],
     }).compile();
 
     service = module.get<QueueService>(QueueService);
     memoryService = module.get<MemoryService>(MemoryService);
+    workerPoolService = module.get<WorkerPoolService>(WorkerPoolService);
   });
 
   afterEach(() => {
@@ -138,6 +141,46 @@ describe('QueueService', () => {
       (service as any).processQueue();
       await jest.advanceTimersByTimeAsync(20);
       await assertion;
+    });
+
+    it('알 수 없는 workloadType은 일반 큐로 fallback 되어야 한다', async () => {
+      Object.defineProperty(workerPoolService, 'isEnabled', {
+        configurable: true,
+        get: () => true,
+      });
+      const addTaskSpy = jest.spyOn(workerPoolService, 'addTask');
+
+      const promise = service.enqueue(() => Promise.resolve('fallback-ok'), {
+        workloadType: 'gpu',
+      });
+
+      (service as any).processQueue();
+      await expect(promise).resolves.toBe('fallback-ok');
+      expect(addTaskSpy).not.toHaveBeenCalled();
+      expect(service.getQueueStats().workloadGeneralQueueFallbackCount).toBe(1);
+    });
+
+    it('명시한 workloadType이 cpu면 워커 대상 작업으로 분류되어야 한다', () => {
+      Object.defineProperty(workerPoolService, 'isEnabled', {
+        configurable: true,
+        get: () => true,
+      });
+
+      const internal = service as any;
+      const eligible = internal.isWorkerEligibleTask({
+        ...createTask(99),
+        workloadType: WorkloadType.CPU,
+      });
+
+      expect(eligible).toBe(true);
+    });
+
+    it('입력 검증: size는 양의 정수여야 한다', async () => {
+      await expect(
+        service.enqueue(() => Promise.resolve('invalid'), {
+          size: 0,
+        }),
+      ).rejects.toThrow('size 값은 0보다 큰 정수여야 합니다.');
     });
 
     it('배치 작업이 대기 타임아웃되면 배치 큐에서도 제거되어야 한다', async () => {

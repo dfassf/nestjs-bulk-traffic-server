@@ -13,6 +13,10 @@ const POSITIVE_INT_KEYS = [
   'QUEUE_PROCESS_INTERVAL_MS',
   'QUEUE_MEMORY_CHECK_INTERVAL_MS',
   'QUEUE_STATS_LOG_INTERVAL_MS',
+  'WORKER_POOL_SIZE',
+  'WORKER_MAX_CPU_CONCURRENCY',
+  'WORKER_MAX_MEMORY_CONCURRENCY',
+  'WORKER_MAX_CUSTOM_CONCURRENCY',
 ];
 
 function assertPositiveInt(value: unknown, key: string): void {
@@ -29,6 +33,15 @@ function assertPositiveInt(value: unknown, key: string): void {
 export function validateEnv(config: EnvMap): EnvMap {
   for (const key of POSITIVE_INT_KEYS) {
     assertPositiveInt(config[key], key);
+  }
+
+  const disableWorkers = config.DISABLE_WORKERS;
+  if (
+    disableWorkers !== undefined &&
+    disableWorkers !== 'true' &&
+    disableWorkers !== 'false'
+  ) {
+    throw new Error('DISABLE_WORKERS는 true 또는 false 문자열이어야 합니다.');
   }
 
   const allowedOrigins = config.ALLOWED_ORIGINS;

@@ -22,29 +22,23 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   private batchQueues: Map<string, TaskBatch> = new Map();
 
   private isProcessingQueue = false;
+  private processSignalPending = false;
+
   private readonly concurrentTasks = this.readPositiveIntEnv(
     'QUEUE_CONCURRENT_TASKS',
     50,
   );
-  private taskIdCounter = 0;
-
-  private activeRequests = 0;
   private readonly maxConcurrentRequests = this.readPositiveIntEnv(
     'QUEUE_MAX_CONCURRENT_REQUESTS',
     200,
   );
-
-  private totalProcessed = 0;
-  private totalRejected = 0;
-  private totalTimeout = 0;
-
-  private recentProcessed = 0;
-  private recentRejected = 0;
-  private recentTimeout = 0;
-
   private readonly taskTimeoutMs = this.readPositiveIntEnv(
     'QUEUE_TASK_TIMEOUT_MS',
     15000,
+  );
+  private readonly executionTimeoutMs = this.readPositiveIntEnv(
+    'QUEUE_EXECUTION_TIMEOUT_MS',
+    10000,
   );
   private readonly queueOverflowThreshold = this.readPositiveIntEnv(
     'QUEUE_OVERFLOW_THRESHOLD',
@@ -64,6 +58,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     'QUEUE_STATS_LOG_INTERVAL_MS',
     60000,
   );
+
+  private taskIdCounter = 0;
+  private activeRequests = 0;
+
+  private totalProcessed = 0;
+  private totalRejected = 0;
+  private totalTimeout = 0;
+
+  private recentProcessed = 0;
+  private recentRejected = 0;
+  private recentTimeout = 0;
 
   private queueProcessTimer: ReturnType<typeof setInterval> | null = null;
   private batchAgingTimer: ReturnType<typeof setInterval> | null = null;
@@ -96,10 +101,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private startProcessingIntervals(): void {
-    this.queueProcessTimer = setInterval(
-      () => this.processQueue(),
-      this.queueProcessIntervalMs,
-    );
+    // 이벤트 기반 처리 실패 시를 대비한 fallback 폴링
+    this.queueProcessTimer = setInterval(() => {
+      if (this.getTotalQueueLength() > 0) {
+        this.requestProcessQueue();
+      }
+    }, this.queueProcessIntervalMs);
 
     this.batchAgingTimer = setInterval(
       () =>
@@ -110,36 +117,52 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.batchAgingIntervalMs,
     );
 
-    this.memoryCheckTimer = setInterval(
-      () =>
-        this.memoryService.checkMemoryUsage(
-          () => {
-            this.incrementTimeout(
-              this.memoryService.cleanupOldTasks(
-                {
-                  high: this.highPriorityQueue,
-                  normal: this.normalPriorityQueue,
-                  low: this.lowPriorityQueue,
-                },
-                this.batchQueues,
-                this.taskTimeoutMs,
-              ),
-            );
-          },
-          () => {
-            this.incrementRejected(
-              this.memoryService.forceReduceQueues(
-                this.lowPriorityQueue,
-                this.batchQueues,
-                this.processBatch.bind(this),
-              ),
-            );
-          },
-        ),
-      this.memoryCheckIntervalMs,
-    );
+    this.memoryCheckTimer = setInterval(() => {
+      this.memoryService.checkMemoryUsage(
+        () => {
+          this.incrementTimeout(
+            this.memoryService.cleanupOldTasks(
+              {
+                high: this.highPriorityQueue,
+                normal: this.normalPriorityQueue,
+                low: this.lowPriorityQueue,
+              },
+              this.batchQueues,
+              this.taskTimeoutMs,
+            ),
+          );
+        },
+        () => {
+          this.incrementRejected(
+            this.memoryService.forceReduceQueues(
+              this.lowPriorityQueue,
+              this.batchQueues,
+              this.processBatch.bind(this),
+            ),
+          );
+        },
+      );
 
-    this.statsLogTimer = setInterval(() => this.logStats(), this.statsLogIntervalMs);
+      // 메모리 압박이 해제되면 대기 중이던 저우선순위 큐 처리를 재개한다.
+      if (!this.memoryService.memoryPressure && this.lowPriorityQueue.length > 0) {
+        this.requestProcessQueue();
+      }
+    }, this.memoryCheckIntervalMs);
+
+    this.statsLogTimer = setInterval(
+      () => this.logStats(),
+      this.statsLogIntervalMs,
+    );
+  }
+
+  private requestProcessQueue(): void {
+    if (this.processSignalPending) return;
+
+    this.processSignalPending = true;
+    setImmediate(() => {
+      this.processSignalPending = false;
+      this.processQueue();
+    });
   }
 
   private incrementProcessed(count = 1): void {
@@ -176,6 +199,37 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  private withExecutionTimeout<T>(
+    execute: () => Promise<T>,
+    timeoutMs: number,
+  ): () => Promise<T> {
+    return () =>
+      new Promise<T>((resolve, reject) => {
+        let settled = false;
+
+        const timerId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error(`작업 실행 시간 초과 (${timeoutMs}ms)`));
+        }, timeoutMs);
+
+        Promise.resolve()
+          .then(execute)
+          .then((result) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timerId);
+            resolve(result);
+          })
+          .catch((error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timerId);
+            reject(error);
+          });
+      });
+  }
+
   async enqueue<T>(
     execute: () => Promise<T>,
     options: EnqueueOptions = {},
@@ -183,6 +237,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     const priority = options.priority ?? 0;
     const category = options.category || 'default';
     const size = options.size ?? 1;
+    const timeout = options.timeout ?? this.executionTimeoutMs;
 
     if (this.memoryService.memoryPressure && priority < 0) {
       this.incrementRejected();
@@ -198,13 +253,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       const task: QueueTask = {
         id: ++this.taskIdCounter,
         requestId: options.requestId,
-        execute,
+        execute: this.withExecutionTimeout(execute, timeout),
         resolve: resolve as (value: unknown) => void,
         reject,
         timestamp: Date.now(),
         priority,
         category,
         size,
+        timeout,
       };
 
       const timeoutId = setTimeout(() => {
@@ -244,7 +300,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         this.lowPriorityQueue.push(task);
       }
 
-      setImmediate(() => this.processQueue());
+      this.requestProcessQueue();
     });
   }
 
@@ -261,11 +317,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         this.maxConcurrentRequests - this.activeRequests,
       );
 
-      const queues = [
-        this.highPriorityQueue,
-        this.normalPriorityQueue,
-        this.lowPriorityQueue,
-      ];
+      const queues = this.memoryService.memoryPressure
+        ? [this.highPriorityQueue, this.normalPriorityQueue]
+        : [
+            this.highPriorityQueue,
+            this.normalPriorityQueue,
+            this.lowPriorityQueue,
+          ];
 
       for (const queue of queues) {
         while (queue.length > 0 && processed < availableSlots) {
@@ -285,11 +343,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
               task.reject(error);
             })
             .finally(() => {
-              this.activeRequests--;
-
-              if (this.getTotalQueueLength() > 0) {
-                setImmediate(() => this.processQueue());
-              }
+              this.activeRequests = Math.max(0, this.activeRequests - 1);
+              this.requestProcessQueue();
             });
         }
 
@@ -297,6 +352,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
     } finally {
       this.isProcessingQueue = false;
+
+      if (
+        this.activeRequests < this.maxConcurrentRequests &&
+        this.getTotalQueueLength() > 0
+      ) {
+        this.requestProcessQueue();
+      }
     }
   }
 
@@ -308,7 +370,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.maxConcurrentRequests,
       (processed, activeChange) => {
         this.incrementProcessed(processed);
-        this.activeRequests += activeChange;
+        this.activeRequests = Math.max(0, this.activeRequests + activeChange);
+
+        if (activeChange < 0) {
+          this.requestProcessQueue();
+        }
       },
     );
   }

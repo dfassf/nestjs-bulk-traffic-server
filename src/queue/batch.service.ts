@@ -76,13 +76,29 @@ export class BatchService {
       return;
     }
 
-    if (activeRequests >= maxConcurrentRequests) return;
+    const availableSlots = maxConcurrentRequests - activeRequests;
+    if (availableSlots <= 0) return;
 
-    batchQueues.delete(category);
+    const dispatchCount = Math.min(batch.tasks.length, availableSlots);
+    if (dispatchCount <= 0) return;
+
+    const tasksToProcess = batch.tasks.splice(0, dispatchCount);
+    const processedBatchSize = tasksToProcess.reduce(
+      (total, task) => total + (task.size ?? 1),
+      0,
+    );
+    batch.totalSize = Math.max(0, batch.totalSize - processedBatchSize);
+
+    if (batch.tasks.length === 0) {
+      batchQueues.delete(category);
+    } else {
+      // 남은 작업은 새로 들어온 배치처럼 처리 지연 시간을 다시 계산한다.
+      batch.createdAt = Date.now();
+    }
 
     let processed = 0;
     Promise.all(
-      batch.tasks.map((task) => {
+      tasksToProcess.map((task) => {
         return Promise.resolve()
           .then(() => task.execute())
           .then((result) => {
@@ -94,9 +110,9 @@ export class BatchService {
           });
       }),
     ).finally(() => {
-      onComplete(processed, -1);
+      onComplete(processed, -dispatchCount);
     });
 
-    onComplete(0, 1);
+    onComplete(0, dispatchCount);
   }
 }

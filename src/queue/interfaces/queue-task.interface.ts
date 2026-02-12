@@ -61,4 +61,5 @@ export interface EnqueueOptions {
   category?: string;
   batch?: boolean;
   size?: number;
+  timeout?: number;
 }

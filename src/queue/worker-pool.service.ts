@@ -7,6 +7,7 @@ import {
   WorkerTaskData,
   WorkloadType,
 } from './interfaces/queue-task.interface';
+import { WorkerHealthService } from './worker-health.service';
 
 interface WorkerMessage {
   success?: boolean;
@@ -30,8 +31,6 @@ export class WorkerPoolService implements OnModuleDestroy {
   private readonly useWorkers =
     process.env.DISABLE_WORKERS !== 'true' && process.env.NODE_ENV !== 'test';
   private readonly workerCount = this.readPositiveIntEnv('WORKER_POOL_SIZE', 4);
-  private readonly healthCheckIntervalMs = 10000;
-  private readonly healthCheckTimeoutMs = 2000;
   private readonly cpuConcurrencyLimit = this.clampConcurrencyLimit(
     this.readPositiveIntEnv('WORKER_MAX_CPU_CONCURRENCY', this.workerCount),
   );
@@ -52,7 +51,6 @@ export class WorkerPoolService implements OnModuleDestroy {
   private workerBusy: boolean[] = [];
   private workerTaskQueue: WorkerTaskData[] = [];
   private assignedTasks = new Map<number, WorkerTaskData>();
-  private pingTimeoutMap = new Map<number, ReturnType<typeof setTimeout>>();
   private activeByType: Record<DispatchableWorkloadType, number> = {
     [WorkloadType.CPU]: 0,
     [WorkloadType.MEMORY]: 0,
@@ -65,10 +63,11 @@ export class WorkerPoolService implements OnModuleDestroy {
   };
   private droppedUnknownWorkloadCount = 0;
 
-  private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private onResult: ((workerId: number, result: WorkerMessage) => void) | null =
     null;
   private shuttingDown = false;
+
+  constructor(private readonly healthService: WorkerHealthService) {}
 
   get isEnabled(): boolean {
     return this.useWorkers;
@@ -126,7 +125,11 @@ export class WorkerPoolService implements OnModuleDestroy {
       this.createOrReplaceWorker(i);
     }
 
-    this.startHealthChecks();
+    this.healthService.startHealthChecks(
+      this.workerPool,
+      this.workerBusy,
+      (index, error) => this.handleWorkerFailure(index, error),
+    );
     this.logger.log(`워커 풀 초기화 완료: ${this.workerCount}개`);
   }
 
@@ -137,15 +140,7 @@ export class WorkerPoolService implements OnModuleDestroy {
   async destroy(): Promise<void> {
     this.shuttingDown = true;
 
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer);
-      this.healthCheckTimer = null;
-    }
-
-    for (const timer of this.pingTimeoutMap.values()) {
-      clearTimeout(timer);
-    }
-    this.pingTimeoutMap.clear();
+    this.healthService.destroy();
 
     const terminations: Array<Promise<number>> = [];
     for (const worker of this.workerPool) {
@@ -395,11 +390,11 @@ export class WorkerPoolService implements OnModuleDestroy {
       }
 
       if (result.healthCheck) {
-        this.clearPingTimeout(index);
+        this.healthService.clearPingTimeout(index);
         return;
       }
 
-      this.clearPingTimeout(index);
+      this.healthService.clearPingTimeout(index);
       this.onResult?.(index, result);
     });
 
@@ -421,52 +416,11 @@ export class WorkerPoolService implements OnModuleDestroy {
     this.workerBusy[index] = false;
   }
 
-  private startHealthChecks(): void {
-    if (!this.useWorkers) return;
-
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer);
-    }
-
-    this.healthCheckTimer = setInterval(() => {
-      for (let i = 0; i < this.workerPool.length; i++) {
-        const worker = this.workerPool[i];
-        if (!worker) continue;
-        if (this.workerBusy[i]) continue;
-        if (this.pingTimeoutMap.has(i)) continue;
-
-        try {
-          worker.postMessage({ type: 'system', operation: 'ping' });
-
-          const timeout = setTimeout(() => {
-            this.handleWorkerFailure(i, new Error('워커 헬스체크 타임아웃'));
-          }, this.healthCheckTimeoutMs);
-
-          this.pingTimeoutMap.set(i, timeout);
-        } catch (error) {
-          const wrapped =
-            error instanceof Error
-              ? error
-              : new Error('워커 헬스체크 메시지 전송 실패');
-          this.handleWorkerFailure(i, wrapped);
-        }
-      }
-    }, this.healthCheckIntervalMs);
-  }
-
-  private clearPingTimeout(index: number): void {
-    const timeout = this.pingTimeoutMap.get(index);
-    if (!timeout) return;
-
-    clearTimeout(timeout);
-    this.pingTimeoutMap.delete(index);
-  }
-
   private handleWorkerFailure(index: number, error: Error): void {
     if (this.shuttingDown) return;
 
     this.logger.error(`워커 ${index} 장애: ${error.message}`);
-    this.clearPingTimeout(index);
+    this.healthService.clearPingTimeout(index);
 
     if (this.assignedTasks.has(index)) {
       if (this.onResult) {

@@ -44,3 +44,7 @@ lerna-debug.log*
 
 # queue snapshot
 .queue-snapshot.json
+
+# Go binaries
+go-engine/engine
+*.exe

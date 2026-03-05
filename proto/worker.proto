@@ -1,0 +1,52 @@
+syntax = "proto3";
+package worker;
+
+option go_package = "github.com/dfassf/nestjs-bulk-traffic-server/go-engine/proto";
+
+service WorkerEngine {
+  rpc Execute (TaskRequest) returns (TaskResponse);
+  rpc GetStats (Empty) returns (EngineStats);
+  rpc HealthCheck (Empty) returns (HealthResponse);
+}
+
+message TaskRequest {
+  string task_id = 1;
+  string workload_type = 2;
+  int32 priority = 3;
+  bytes payload = 4;
+  int64 timeout_ms = 5;
+  map<string, string> metadata = 6;
+}
+
+message TaskResponse {
+  string task_id = 1;
+  bool success = 2;
+  bytes result = 3;
+  string error = 4;
+  int64 duration_ms = 5;
+  string engine = 6;
+}
+
+message EngineStats {
+  int64 total_processed = 1;
+  int64 total_failed = 2;
+  int64 active_tasks = 3;
+  map<string, PoolStats> pools = 4;
+}
+
+message PoolStats {
+  int32 active_workers = 1;
+  int32 queue_length = 2;
+  int64 processed = 3;
+  int64 failed = 4;
+  double avg_latency_ms = 5;
+  double p99_latency_ms = 6;
+}
+
+message HealthResponse {
+  bool healthy = 1;
+  string version = 2;
+  int64 uptime_seconds = 3;
+}
+
+message Empty {}

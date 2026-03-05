@@ -3,6 +3,7 @@ import { QueueService } from './queue.service';
 import { MemoryService } from './memory.service';
 import { BatchService } from './batch.service';
 import { QueueStatsController } from './controllers/queue-stats.controller';
+import { LoadTestController } from './controllers/load-test.controller';
 import { WorkerPoolService } from './worker-pool.service';
 import { QueueOptionsParser } from './queue-options.parser';
 import { QueueStatsService } from './queue-stats.service';
@@ -14,7 +15,7 @@ import { BenchmarkService } from './benchmark.service';
 
 @Module({
   imports: [PersistenceModule],
-  controllers: [QueueStatsController],
+  controllers: [QueueStatsController, LoadTestController],
   providers: [
     QueueService,
     MemoryService,

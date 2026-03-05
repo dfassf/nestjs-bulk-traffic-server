@@ -23,6 +23,9 @@ export class AppModule implements NestModule {
       .exclude(
         { path: 'health', method: RequestMethod.ALL },
         { path: 'queue-stats', method: RequestMethod.ALL },
+        { path: 'benchmark-stats', method: RequestMethod.ALL },
+        { path: 'go-engine-stats', method: RequestMethod.ALL },
+        { path: 'load-test/(.*)', method: RequestMethod.ALL },
       )
       .forRoutes({ path: '*', method: RequestMethod.ALL });
   }

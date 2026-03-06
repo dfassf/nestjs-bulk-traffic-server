@@ -45,6 +45,9 @@ lerna-debug.log*
 # queue snapshot
 .queue-snapshot.json
 
+# benchmark db
+.bench.sqlite
+
 # Go binaries
 go-engine/engine
 *.exe

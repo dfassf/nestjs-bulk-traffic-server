@@ -8,6 +8,8 @@ import {
   WorkloadType,
 } from './interfaces/queue-task.interface';
 import { WorkerHealthService } from './worker-health.service';
+import { WorkerTaskRouterService } from './worker-task-router.service';
+import { readPositiveIntEnv } from './utils/env';
 
 interface WorkerMessage {
   success?: boolean;
@@ -19,55 +21,26 @@ interface WorkerMessage {
   duration?: number;
 }
 
-type DispatchableWorkloadType =
-  | WorkloadType.CPU
-  | WorkloadType.MEMORY
-  | WorkloadType.CUSTOM;
-
 @Injectable()
 export class WorkerPoolService implements OnModuleDestroy {
   private readonly logger = new Logger(WorkerPoolService.name);
 
   private readonly useWorkers =
     process.env.DISABLE_WORKERS !== 'true' && process.env.NODE_ENV !== 'test';
-  private readonly workerCount = this.readPositiveIntEnv('WORKER_POOL_SIZE', 4);
-  private readonly cpuConcurrencyLimit = this.clampConcurrencyLimit(
-    this.readPositiveIntEnv('WORKER_MAX_CPU_CONCURRENCY', this.workerCount),
-  );
-  private readonly memoryConcurrencyLimit = this.clampConcurrencyLimit(
-    this.readPositiveIntEnv(
-      'WORKER_MAX_MEMORY_CONCURRENCY',
-      Math.max(1, Math.floor(this.workerCount / 2)),
-    ),
-  );
-  private readonly customConcurrencyLimit = this.clampConcurrencyLimit(
-    this.readPositiveIntEnv(
-      'WORKER_MAX_CUSTOM_CONCURRENCY',
-      Math.max(1, Math.floor(this.workerCount / 2)),
-    ),
-  );
+  private readonly workerCount = readPositiveIntEnv('WORKER_POOL_SIZE', 4);
 
   private workerPool: Array<Worker | null> = [];
   private workerBusy: boolean[] = [];
   private workerTaskQueue: WorkerTaskData[] = [];
   private assignedTasks = new Map<number, WorkerTaskData>();
-  private activeByType: Record<DispatchableWorkloadType, number> = {
-    [WorkloadType.CPU]: 0,
-    [WorkloadType.MEMORY]: 0,
-    [WorkloadType.CUSTOM]: 0,
-  };
-  private dispatchedByType: Record<DispatchableWorkloadType, number> = {
-    [WorkloadType.CPU]: 0,
-    [WorkloadType.MEMORY]: 0,
-    [WorkloadType.CUSTOM]: 0,
-  };
-  private droppedUnknownWorkloadCount = 0;
 
-  private onResult: ((workerId: number, result: WorkerMessage) => void) | null =
-    null;
+  private onResult: ((workerId: number, result: WorkerMessage) => void) | null = null;
   private shuttingDown = false;
 
-  constructor(private readonly healthService: WorkerHealthService) {}
+  constructor(
+    private readonly healthService: WorkerHealthService,
+    private readonly router: WorkerTaskRouterService,
+  ) {}
 
   get isEnabled(): boolean {
     return this.useWorkers;
@@ -77,45 +50,27 @@ export class WorkerPoolService implements OnModuleDestroy {
     return this.workerTaskQueue;
   }
 
-  getPoolStats(): {
-    totalWorkers: number;
-    busyWorkers: number;
-    idleWorkers: number;
-    pendingTasks: number;
-    activeByType: Record<DispatchableWorkloadType, number>;
-    queueByType: Record<WorkloadType, number>;
-    limitsByType: Record<DispatchableWorkloadType, number>;
-    dispatchedByType: Record<DispatchableWorkloadType, number>;
-    droppedUnknownWorkloadCount: number;
-    enabled: boolean;
-  } {
+  getPoolStats() {
     const totalWorkers = this.workerPool.filter(Boolean).length;
     const busyWorkers = this.workerBusy.filter(Boolean).length;
-    const queueByType = this.getPendingQueueByType();
 
     return {
       totalWorkers,
       busyWorkers,
       idleWorkers: Math.max(0, totalWorkers - busyWorkers),
       pendingTasks: this.workerTaskQueue.length,
-      activeByType: { ...this.activeByType },
-      queueByType,
-      limitsByType: {
-        [WorkloadType.CPU]: this.cpuConcurrencyLimit,
-        [WorkloadType.MEMORY]: this.memoryConcurrencyLimit,
-        [WorkloadType.CUSTOM]: this.customConcurrencyLimit,
-      },
-      dispatchedByType: { ...this.dispatchedByType },
-      droppedUnknownWorkloadCount: this.droppedUnknownWorkloadCount,
+      activeByType: this.router.getActiveByType(),
+      queueByType: this.router.getPendingQueueByType(this.workerTaskQueue),
+      limitsByType: this.router.limits,
+      dispatchedByType: this.router.getDispatchedByType(),
+      droppedUnknownWorkloadCount: this.router.droppedUnknownWorkloadCount,
       enabled: this.useWorkers,
     };
   }
 
   initWorkerPool(onResult: (workerId: number, result: WorkerMessage) => void): void {
     if (!this.useWorkers) {
-      this.logger.warn(
-        '워커 시스템이 비활성화되었습니다. 메인 스레드 처리로 동작합니다.',
-      );
+      this.logger.warn('워커 시스템이 비활성화되었습니다. 메인 스레드 처리로 동작합니다.');
       return;
     }
 
@@ -139,14 +94,11 @@ export class WorkerPoolService implements OnModuleDestroy {
 
   async destroy(): Promise<void> {
     this.shuttingDown = true;
-
     this.healthService.destroy();
 
     const terminations: Array<Promise<number>> = [];
     for (const worker of this.workerPool) {
-      if (worker) {
-        terminations.push(worker.terminate());
-      }
+      if (worker) terminations.push(worker.terminate());
     }
 
     await Promise.allSettled(terminations);
@@ -154,11 +106,7 @@ export class WorkerPoolService implements OnModuleDestroy {
     this.workerBusy = [];
     this.workerTaskQueue = [];
     this.assignedTasks.clear();
-    this.activeByType = {
-      [WorkloadType.CPU]: 0,
-      [WorkloadType.MEMORY]: 0,
-      [WorkloadType.CUSTOM]: 0,
-    };
+    this.router.resetActiveByType();
     this.onResult = null;
   }
 
@@ -171,32 +119,29 @@ export class WorkerPoolService implements OnModuleDestroy {
 
     for (let i = 0; i < this.workerPool.length; i++) {
       const worker = this.workerPool[i];
-      if (!worker) continue;
-      if (this.workerBusy[i]) continue;
+      if (!worker || this.workerBusy[i]) continue;
       if (this.workerTaskQueue.length === 0) break;
 
-      const pickedTask = this.dequeueDispatchableTask(onTaskFailed);
-      if (!pickedTask) continue;
-      const { taskData, type } = pickedTask;
+      const picked = this.router.dequeueDispatchableTask(this.workerTaskQueue, onTaskFailed);
+      if (!picked) continue;
+      const { taskData, type } = picked;
 
       try {
         worker.postMessage({
           type,
-          operation: this.determineOperation(taskData),
+          operation: this.router.determineOperation(taskData),
           params: taskData.params || {},
           functionCode: taskData.functionCode ?? taskData.task.functionCode,
           timeout: taskData.timeout ?? taskData.task.timeout,
         });
 
         this.workerBusy[i] = true;
-        this.incrementActiveByType(type);
-        this.dispatchedByType[type] += 1;
+        this.router.incrementActiveByType(type);
         this.assignedTasks.set(i, taskData);
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : '워커 작업 전송 중 알 수 없는 오류';
+        const message = error instanceof Error
+          ? error.message
+          : '워커 작업 전송 중 알 수 없는 오류';
         taskData.task.reject(new Error(`워커 작업 전송 실패: ${message}`));
         onTaskFailed(taskData.task);
         this.workerBusy[i] = false;
@@ -216,7 +161,7 @@ export class WorkerPoolService implements OnModuleDestroy {
     this.workerBusy[workerId] = false;
 
     if (!taskData) return;
-    this.decrementActiveByType(this.determineTaskType(taskData));
+    this.router.decrementActiveByType(this.router.determineTaskType(taskData));
 
     if (result.success) {
       taskData.task.resolve(result.result);
@@ -228,39 +173,13 @@ export class WorkerPoolService implements OnModuleDestroy {
     onFailed(taskData.task);
   }
 
+  // keep for backward compat with tests
   determineTaskType(taskData: WorkerTaskData): WorkloadType {
-    if (taskData.type) return taskData.type;
-
-    const task = taskData.task;
-    if (task.workloadType) return task.workloadType;
-
-    if (taskData.functionCode || task.functionCode) return WorkloadType.CUSTOM;
-    return WorkloadType.UNKNOWN;
+    return this.router.determineTaskType(taskData);
   }
 
   determineOperation(taskData: WorkerTaskData): string {
-    if (taskData.operation) return taskData.operation;
-
-    const type = this.determineTaskType(taskData);
-    const category = taskData.task.category || '';
-
-    if (type === WorkloadType.CPU) {
-      if (category.includes('prime')) return 'findPrimes';
-      if (category.includes('fibonacci')) return 'fibonacci';
-      if (category.includes('matrix')) return 'matrixMultiply';
-      return 'findPrimes';
-    }
-
-    if (type === WorkloadType.MEMORY) {
-      if (category.includes('array')) return 'largeArray';
-      if (category.includes('object') || category.includes('clone')) {
-        return 'objectCloning';
-      }
-      return 'largeArray';
-    }
-
-    if (type === WorkloadType.CUSTOM) return 'execute';
-    return 'findPrimes';
+    return this.router.determineOperation(taskData);
   }
 
   async processWithoutWorkers(
@@ -284,99 +203,9 @@ export class WorkerPoolService implements OnModuleDestroy {
     }
   }
 
-  private readPositiveIntEnv(name: string, fallback: number): number {
-    const raw = process.env[name];
-    if (!raw) return fallback;
-
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-  }
-
-  private clampConcurrencyLimit(limit: number): number {
-    return Math.max(1, Math.min(limit, this.workerCount));
-  }
-
-  private isDispatchableType(
-    type: WorkloadType,
-  ): type is DispatchableWorkloadType {
-    return (
-      type === WorkloadType.CPU ||
-      type === WorkloadType.MEMORY ||
-      type === WorkloadType.CUSTOM
-    );
-  }
-
-  private getConcurrencyLimit(type: DispatchableWorkloadType): number {
-    if (type === WorkloadType.CPU) return this.cpuConcurrencyLimit;
-    if (type === WorkloadType.MEMORY) return this.memoryConcurrencyLimit;
-    return this.customConcurrencyLimit;
-  }
-
-  private canDispatchType(type: DispatchableWorkloadType): boolean {
-    return this.activeByType[type] < this.getConcurrencyLimit(type);
-  }
-
-  private incrementActiveByType(type: DispatchableWorkloadType): void {
-    this.activeByType[type] += 1;
-  }
-
-  private decrementActiveByType(type: WorkloadType): void {
-    if (!this.isDispatchableType(type)) return;
-    this.activeByType[type] = Math.max(0, this.activeByType[type] - 1);
-  }
-
-  private dequeueDispatchableTask(
-    onTaskFailed: (task: QueueTask) => void,
-  ): { taskData: WorkerTaskData; type: DispatchableWorkloadType } | null {
-    if (this.workerTaskQueue.length === 0) return null;
-
-    for (let i = 0; i < this.workerTaskQueue.length; i++) {
-      const candidate = this.workerTaskQueue[i];
-      const type = this.determineTaskType(candidate);
-
-      if (!this.isDispatchableType(type)) {
-        this.workerTaskQueue.splice(i, 1);
-        this.droppedUnknownWorkloadCount += 1;
-        candidate.task.reject(
-          new Error('알 수 없는 workloadType은 워커로 처리할 수 없습니다.'),
-        );
-        onTaskFailed(candidate.task);
-        i--;
-        continue;
-      }
-
-      if (!this.canDispatchType(type)) {
-        continue;
-      }
-
-      this.workerTaskQueue.splice(i, 1);
-      candidate.type = type;
-      return { taskData: candidate, type };
-    }
-
-    return null;
-  }
-
-  private getPendingQueueByType(): Record<WorkloadType, number> {
-    const queueByType: Record<WorkloadType, number> = {
-      [WorkloadType.CPU]: 0,
-      [WorkloadType.MEMORY]: 0,
-      [WorkloadType.CUSTOM]: 0,
-      [WorkloadType.UNKNOWN]: 0,
-    };
-
-    for (const taskData of this.workerTaskQueue) {
-      const type = this.determineTaskType(taskData);
-      queueByType[type] += 1;
-    }
-
-    return queueByType;
-  }
-
   private resolveWorkerPath(): string {
     const distPath = path.resolve(__dirname, 'worker.js');
     if (existsSync(distPath)) return distPath;
-
     return path.resolve(process.cwd(), 'src/queue/worker.js');
   }
 
@@ -388,27 +217,20 @@ export class WorkerPoolService implements OnModuleDestroy {
         this.workerBusy[index] = false;
         return;
       }
-
       if (result.healthCheck) {
         this.healthService.clearPingTimeout(index);
         return;
       }
-
       this.healthService.clearPingTimeout(index);
       this.onResult?.(index, result);
     });
 
-    worker.on('error', (error) => {
-      this.handleWorkerFailure(index, error);
-    });
+    worker.on('error', (error) => this.handleWorkerFailure(index, error));
 
     worker.on('exit', (code) => {
       if (this.shuttingDown) return;
       if (code !== 0) {
-        this.handleWorkerFailure(
-          index,
-          new Error(`워커 비정상 종료(code=${code})`),
-        );
+        this.handleWorkerFailure(index, new Error(`워커 비정상 종료(code=${code})`));
       }
     });
 
@@ -432,7 +254,7 @@ export class WorkerPoolService implements OnModuleDestroy {
         const taskData = this.assignedTasks.get(index);
         this.assignedTasks.delete(index);
         if (taskData) {
-          this.decrementActiveByType(this.determineTaskType(taskData));
+          this.router.decrementActiveByType(this.router.determineTaskType(taskData));
         }
         taskData?.task.reject(
           new Error(`워커 장애로 작업이 실패했습니다: ${error.message}`),

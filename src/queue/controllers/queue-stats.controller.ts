@@ -1,14 +1,13 @@
 import { Controller, Get } from '@nestjs/common';
 import { QueueService } from '../queue.service';
-import { BenchmarkService } from '../benchmark.service';
 import { EngineRouterService } from '../engine-router.service';
 import { GoEngineClient } from '../go-engine.client';
+import { toErrorMessage } from '../utils/error-message';
 
 @Controller()
 export class QueueStatsController {
   constructor(
     private readonly queueService: QueueService,
-    private readonly benchmarkService: BenchmarkService,
     private readonly engineRouter: EngineRouterService,
     private readonly goEngineClient: GoEngineClient,
   ) {}
@@ -30,15 +29,6 @@ export class QueueStatsController {
     };
   }
 
-  @Get('benchmark-stats')
-  getBenchmarkStats() {
-    return {
-      timestamp: new Date().toISOString(),
-      engineMode: this.engineRouter.getEngine(),
-      ...this.benchmarkService.getStats(),
-    };
-  }
-
   @Get('go-engine-stats')
   async getGoEngineStats() {
     try {
@@ -47,7 +37,7 @@ export class QueueStatsController {
     } catch (error) {
       return {
         connected: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: toErrorMessage(error),
       };
     }
   }

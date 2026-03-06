@@ -3,6 +3,8 @@ import { QueuePersistence } from './persistence.interface';
 import { QueueSnapshot } from '../interfaces/queue-task.interface';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { toErrorMessage } from '../utils/error-message';
+import { readPositiveIntEnv } from '../utils/env';
 
 @Injectable()
 export class FilePersistenceService implements QueuePersistence {
@@ -14,7 +16,7 @@ export class FilePersistenceService implements QueuePersistence {
     this.snapshotPath = path.resolve(
       process.env.QUEUE_SNAPSHOT_PATH || '.queue-snapshot.json',
     );
-    this.maxSnapshotAgeMs = this.readPositiveIntEnv(
+    this.maxSnapshotAgeMs = readPositiveIntEnv(
       'QUEUE_SNAPSHOT_MAX_AGE_MS',
       5 * 60 * 1000,
     );
@@ -24,7 +26,7 @@ export class FilePersistenceService implements QueuePersistence {
     try {
       await fs.writeFile(this.snapshotPath, JSON.stringify(snapshot), 'utf-8');
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = toErrorMessage(error);
       this.logger.error(`큐 스냅샷 저장 실패: ${message}`);
     }
   }
@@ -48,7 +50,7 @@ export class FilePersistenceService implements QueuePersistence {
         return null;
       }
 
-      const message = error instanceof Error ? error.message : String(error);
+      const message = toErrorMessage(error);
       this.logger.error(`큐 스냅샷 로드 실패: ${message}`);
       return null;
     }
@@ -60,14 +62,5 @@ export class FilePersistenceService implements QueuePersistence {
     } catch {
       // file does not exist
     }
-  }
-
-  private readPositiveIntEnv(name: string, fallback: number): number {
-    const raw = process.env[name];
-    if (!raw) return fallback;
-
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-    return parsed;
   }
 }

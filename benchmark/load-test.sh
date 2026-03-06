@@ -172,8 +172,42 @@ else
   echo "  $RESULT"
 fi
 
-# 7. 연속 부하 (순차)
-header "7. 연속 부하 ($REQUESTS개 순차 요청)"
+# 7. DB Write 벤치마크
+header "7. DB Write 벤치마크"
+for COUNT in 100 1000 5000; do
+  START=$(now_ms)
+  RESULT=$(curl -s -X POST "$BASE_URL/load-test/db-write" \
+    -H "Content-Type: application/json" \
+    -d "{\"count\": $COUNT}")
+  END=$(now_ms)
+  ELAPSED=$((END - START))
+  OPS=$(echo "$RESULT" | grep -o '"opsPerSec":[0-9]*' | cut -d: -f2)
+  AVG=$(echo "$RESULT" | grep -o '"avgMs":[0-9.]*' | cut -d: -f2)
+  ok "INSERT ${COUNT}건: ${ELAPSED}ms (${OPS} ops/s, avg ${AVG}ms/op)"
+done
+
+# 8. DB Read 벤치마크
+header "8. DB Read 벤치마크"
+for COUNT in 100 1000 5000; do
+  START=$(now_ms)
+  RESULT=$(curl -s -X POST "$BASE_URL/load-test/db-read" \
+    -H "Content-Type: application/json" \
+    -d "{\"count\": $COUNT}")
+  END=$(now_ms)
+  ELAPSED=$((END - START))
+  OPS=$(echo "$RESULT" | grep -o '"opsPerSec":[0-9]*' | cut -d: -f2)
+  AVG=$(echo "$RESULT" | grep -o '"avgMs":[0-9.]*' | cut -d: -f2)
+  ok "SELECT ${COUNT}건: ${ELAPSED}ms (${OPS} ops/s, avg ${AVG}ms/op)"
+done
+
+ROWS=$(curl -s "$BASE_URL/load-test/db-rows" | grep -o '"rows":[0-9]*' | cut -d: -f2)
+info "DB 총 행 수: $ROWS"
+
+curl -s -X DELETE "$BASE_URL/load-test/db-reset" > /dev/null
+ok "DB 초기화 완료"
+
+# 9. 연속 부하 (순차)
+header "9. 연속 부하 ($REQUESTS개 순차 요청)"
 START=$(now_ms)
 SEQ_SUCCESS=0
 SEQ_FAIL=0
@@ -202,8 +236,8 @@ ELAPSED=$((END - START))
 THROUGHPUT=$(echo "scale=1; $REQUESTS * 1000 / $ELAPSED" | bc 2>/dev/null || echo "N/A")
 ok "완료: 성공=$SEQ_SUCCESS 실패=$SEQ_FAIL (${ELAPSED}ms, ${THROUGHPUT} req/s)"
 
-# 8. 큐 상태 확인
-header "8. 최종 큐 상태"
+# 10. 큐 상태 확인
+header "10. 최종 큐 상태"
 STATS=$(curl -s "$BASE_URL/queue-stats")
 PROCESSED=$(echo "$STATS" | grep -o '"totalProcessed":[0-9]*' | cut -d: -f2)
 REJECTED_Q=$(echo "$STATS" | grep -o '"totalRejected":[0-9]*' | cut -d: -f2)
@@ -214,11 +248,21 @@ QUEUE_LEN=$(echo "$STATS" | grep -o '"totalQueueLength":[0-9]*' | cut -d: -f2)
 info "처리: $PROCESSED | 거부: $REJECTED_Q | 타임아웃: $TIMEOUT_Q"
 info "활성: $ACTIVE | 큐 잔여: $QUEUE_LEN"
 
-# 벤치마크 (both 모드일 때)
+# Node vs Go 비교 (both 모드일 때)
 if [ "$ENGINE" = "both" ]; then
-  header "9. 벤치마크 결과"
-  BENCH=$(curl -s "$BASE_URL/benchmark-stats")
-  echo "$BENCH" | python3 -m json.tool 2>/dev/null || echo "$BENCH"
+  header "11. Node vs Go 엔진 비교"
+  info "Node=워커스레드(findPrimes) vs Go=goroutine(gRPC)"
+  for MAX in 100000 500000 2000000; do
+    RESULT=$(curl -s -X POST "$BASE_URL/load-test/compare" \
+      -H "Content-Type: application/json" \
+      -d "{\"count\": 5, \"max\": $MAX}" --max-time 120)
+    NODE_WINS=$(echo "$RESULT" | grep -o '"nodeWins":[0-9]*' | cut -d: -f2)
+    GO_WINS=$(echo "$RESULT" | grep -o '"goWins":[0-9]*' | cut -d: -f2)
+    AVG_NODE=$(echo "$RESULT" | grep -o '"avgNodeMs":[0-9.]*' | cut -d: -f2)
+    AVG_GO=$(echo "$RESULT" | grep -o '"avgGoMs":[0-9.]*' | cut -d: -f2)
+    SPEEDUP=$(echo "$RESULT" | grep -o '"speedup":[0-9.]*' | cut -d: -f2)
+    info "findPrimes(max=$MAX): Node ${AVG_NODE}ms vs Go ${AVG_GO}ms (승: Node=$NODE_WINS Go=$GO_WINS, speedup=${SPEEDUP}x)"
+  done
 fi
 
 header "테스트 완료"

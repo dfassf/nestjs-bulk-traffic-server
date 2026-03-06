@@ -1,16 +1,19 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Post } from '@nestjs/common';
 import { QueueService } from '../queue.service';
 import { EngineRouterService } from '../engine-router.service';
 import { WorkloadType } from '../interfaces/queue-task.interface';
+import { SqliteBenchService } from '../sqlite-bench.service';
 
 @Controller('load-test')
 export class LoadTestController {
   constructor(
     private readonly queueService: QueueService,
     private readonly engineRouter: EngineRouterService,
+    private readonly sqliteBench: SqliteBenchService,
   ) {}
 
   @Post('cpu')
+  @HttpCode(200)
   async cpuTask(
     @Body() body: { iterations?: number; priority?: number },
   ) {
@@ -24,6 +27,7 @@ export class LoadTestController {
   }
 
   @Post('io')
+  @HttpCode(200)
   async ioTask(
     @Body() body: { delayMs?: number; priority?: number },
   ) {
@@ -37,6 +41,7 @@ export class LoadTestController {
   }
 
   @Post('batch')
+  @HttpCode(200)
   async batchTask(
     @Body() body: { itemCount?: number; priority?: number },
   ) {
@@ -50,6 +55,7 @@ export class LoadTestController {
   }
 
   @Post('mixed')
+  @HttpCode(200)
   async mixedBurst(
     @Body() body: { count?: number; cpuRatio?: number; ioRatio?: number; batchRatio?: number },
   ) {
@@ -86,6 +92,101 @@ export class LoadTestController {
     const rejected = results.filter(r => r.status === 'rejected').length;
 
     return { total: count, fulfilled, rejected };
+  }
+
+  @Post('compare')
+  @HttpCode(200)
+  async compareEngines(
+    @Body() body: { count?: number; max?: number },
+  ) {
+    if (this.engineRouter.getEngine() !== 'both') {
+      return { error: 'WORKER_ENGINE=both 모드에서만 사용 가능합니다.' };
+    }
+
+    const count = Math.min(body.count || 10, 100);
+    const max = body.max || 500000;
+    const results: { winner: string; nodeMs: number; goMs: number }[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const goTask = {
+        id: Date.now() + i,
+        requestId: `compare-go-${i}`,
+        timestamp: Date.now(),
+        priority: 0,
+        workloadType: 'cpu' as any,
+        params: { max },
+        timeout: 30000,
+      } as any;
+
+      try {
+        // Node: worker thread 경유 (findPrimes via QueueService)
+        const nodeStart = performance.now();
+        await this.queueService.enqueue(
+          () => Promise.resolve(),
+          { priority: 5, workloadType: WorkloadType.CPU, params: { max } },
+        );
+        const nodeMs = performance.now() - nodeStart;
+
+        // Go: gRPC → goroutine 경유
+        const goStart = performance.now();
+        await this.engineRouter.dispatchToGo(goTask);
+        const goMs = performance.now() - goStart;
+
+        results.push({
+          winner: nodeMs <= goMs ? 'node' : 'go',
+          nodeMs: Math.round(nodeMs * 100) / 100,
+          goMs: Math.round(goMs * 100) / 100,
+        });
+      } catch (e) {
+        results.push({ winner: 'error', nodeMs: 0, goMs: 0 });
+      }
+    }
+
+    const nodeWins = results.filter(r => r.winner === 'node').length;
+    const goWins = results.filter(r => r.winner === 'go').length;
+    const errors = results.filter(r => r.winner === 'error').length;
+    const validResults = results.filter(r => r.winner !== 'error');
+    const avgNodeMs = validResults.length > 0
+      ? validResults.reduce((s, r) => s + r.nodeMs, 0) / validResults.length : 0;
+    const avgGoMs = validResults.length > 0
+      ? validResults.reduce((s, r) => s + r.goMs, 0) / validResults.length : 0;
+
+    return {
+      total: count,
+      task: `findPrimes(max=${max})`,
+      nodeWins,
+      goWins,
+      errors,
+      avgNodeMs: Math.round(avgNodeMs * 100) / 100,
+      avgGoMs: Math.round(avgGoMs * 100) / 100,
+      speedup: avgGoMs > 0 ? Math.round((avgNodeMs / avgGoMs) * 100) / 100 : null,
+      detail: results,
+    };
+  }
+
+  @Post('db-write')
+  @HttpCode(200)
+  dbWrite(@Body() body: { count?: number }) {
+    const count = Math.min(body.count || 100, 100_000_000);
+    return this.sqliteBench.benchWrite(count);
+  }
+
+  @Post('db-read')
+  @HttpCode(200)
+  dbRead(@Body() body: { count?: number }) {
+    const count = Math.min(body.count || 100, 100_000_000);
+    return this.sqliteBench.benchRead(count);
+  }
+
+  @Get('db-rows')
+  dbRows() {
+    return { rows: this.sqliteBench.getRowCount() };
+  }
+
+  @Delete('db-reset')
+  dbReset() {
+    this.sqliteBench.reset();
+    return { ok: true };
   }
 
   @Get('ping')

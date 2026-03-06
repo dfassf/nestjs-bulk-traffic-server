@@ -11,23 +11,31 @@ import { WorkerHealthService } from './worker-health.service';
 import { PersistenceModule } from './persistence/persistence.module';
 import { GoEngineClient } from './go-engine.client';
 import { EngineRouterService } from './engine-router.service';
-import { BenchmarkService } from './benchmark.service';
+import { SqliteBenchService } from './sqlite-bench.service';
+import { QueueSnapshotManager } from './queue-snapshot.manager';
+import { QueueStateHolder } from './queue-state.holder';
+import { QueueProcessorService } from './queue-processor.service';
+import { WorkerTaskRouterService } from './worker-task-router.service';
 
 @Module({
   imports: [PersistenceModule],
   controllers: [QueueStatsController, LoadTestController],
   providers: [
     QueueService,
+    QueueStateHolder,
+    QueueProcessorService,
     MemoryService,
     BatchService,
     WorkerPoolService,
     QueueOptionsParser,
     QueueStatsService,
+    QueueSnapshotManager,
     WorkerHealthService,
+    WorkerTaskRouterService,
     GoEngineClient,
     EngineRouterService,
-    BenchmarkService,
+    SqliteBenchService,
   ],
-  exports: [QueueService, MemoryService, WorkerPoolService, EngineRouterService, BenchmarkService],
+  exports: [QueueService, MemoryService, WorkerPoolService, EngineRouterService],
 })
 export class QueueModule {}

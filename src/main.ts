@@ -1,8 +1,10 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as os from 'os';
+import * as path from 'path';
 import { AllExceptionsFilter } from './filters/all-exceptions.filter';
 
 const logger = new Logger('Bootstrap');
@@ -44,10 +46,12 @@ process.on('unhandledRejection', (reason) => {
 });
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['error', 'warn', 'log'],
     bodyParser: true,
   });
+
+  app.useStaticAssets(path.resolve(process.cwd(), 'public'));
 
   const configService = app.get(ConfigService);
 

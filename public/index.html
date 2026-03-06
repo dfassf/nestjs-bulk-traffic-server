@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Performance Test Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+      --text: #e1e4ed; --text-dim: #8b8fa3;
+      --accent: #6c5ce7; --accent-light: #a29bfe;
+      --green: #00b894; --red: #e17055; --orange: #fdcb6e; --blue: #74b9ff;
+      --node-color: #6c5ce7; --go-color: #00b894;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'SF Mono','Fira Code','Cascadia Code',monospace; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    .header { padding: 20px 32px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.5px; }
+    .header .right { display: flex; align-items: center; gap: 16px; }
+    .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+    .status-dot.offline { background: var(--red); }
+
+    /* Tabs */
+    .tab-bar { display: flex; gap: 0; }
+    .tab-btn { background: none; border: none; color: var(--text-dim); font-family: inherit; font-size: 13px; font-weight: 500; padding: 8px 18px; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent-light); border-bottom-color: var(--accent); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: grid; }
+
+    .container { min-height: calc(100vh - 65px); }
+
+    /* -- Shared -- */
+    .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 4px; }
+    .test-type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .test-type-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-family: inherit; transition: all 0.15s; text-align: left; }
+    .test-type-btn:hover { border-color: var(--accent); }
+    .test-type-btn.active { border-color: var(--accent); background: rgba(108,92,231,0.15); }
+    .test-type-btn .label { font-weight: 600; display: block; margin-bottom: 2px; }
+    .test-type-btn .desc { color: var(--text-dim); font-size: 10px; }
+    .param-group { display: flex; flex-direction: column; gap: 8px; }
+    .param-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .param-row label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+    .param-row input { width: 100px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 12px; font-family: inherit; text-align: right; }
+    .param-row input:focus { outline: none; border-color: var(--accent); }
+    .run-btn { width: 100%; padding: 12px; background: var(--accent); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.15s; }
+    .run-btn:hover { background: #5a4bd1; }
+    .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .run-btn.running { background: var(--red); }
+    .progress-section { margin-top: 4px; }
+    .progress-bar-track { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; margin-bottom: 6px; }
+    .progress-bar-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.1s; width: 0%; }
+    .progress-text { font-size: 11px; color: var(--text-dim); display: flex; justify-content: space-between; }
+    .sidebar { border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+    .main { padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    .stat-card .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; letter-spacing: -1px; }
+    .stat-card .unit { font-size: 12px; color: var(--text-dim); font-weight: 400; }
+    .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    .chart-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+    .chart-wrap { position: relative; height: 220px; }
+    .log-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; flex: 1; min-height: 180px; display: flex; flex-direction: column; }
+    .log-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+    .log-area { flex: 1; overflow-y: auto; font-size: 11px; line-height: 1.6; color: var(--text-dim); max-height: 250px; }
+    .log-area .log-line { white-space: pre; }
+    .log-area .log-ok { color: var(--green); }
+    .log-area .log-fail { color: var(--red); }
+    .log-area .log-info { color: var(--blue); }
+    .log-area .log-warn { color: var(--orange); }
+    .history-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .history-table th { text-align: left; padding: 8px 10px; color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 11px; }
+    .history-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+    .badge-cpu { background: rgba(108,92,231,0.2); color: var(--accent-light); }
+    .badge-io { background: rgba(116,185,255,0.2); color: var(--blue); }
+    .badge-mixed { background: rgba(253,203,110,0.2); color: var(--orange); }
+    .badge-db { background: rgba(0,184,148,0.2); color: var(--green); }
+    .badge-node { background: rgba(108,92,231,0.2); color: var(--accent-light); }
+    .badge-go { background: rgba(0,184,148,0.2); color: var(--green); }
+    .empty-state { text-align: center; padding: 40px 20px; color: var(--text-dim); font-size: 13px; }
+
+    /* Compare-specific */
+    .compare-stats { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: stretch; }
+    .engine-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; text-align: center; }
+    .engine-card h4 { font-size: 14px; margin-bottom: 12px; }
+    .engine-card .big-val { font-size: 36px; font-weight: 700; letter-spacing: -1px; }
+    .engine-card .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; font-size: 11px; }
+    .engine-card .metric-label { color: var(--text-dim); }
+    .engine-card .metric-val { font-weight: 600; }
+    .vs-divider { display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: var(--text-dim); }
+    .win-badge { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; margin-top: 8px; }
+    .win-node { background: rgba(108,92,231,0.2); color: var(--accent-light); }
+    .win-go { background: rgba(0,184,148,0.2); color: var(--green); }
+    .win-tie { background: rgba(139,143,163,0.2); color: var(--text-dim); }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Performance Test Dashboard</h1>
+  <div class="right">
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="perf">Load Test</button>
+      <button class="tab-btn" data-tab="compare">Node vs Go</button>
+    </div>
+    <div class="status">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">connecting...</span>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TAB 1: Performance Test ==================== -->
+<div class="tab-panel active container" id="panel-perf" style="grid-template-columns: 320px 1fr;">
+  <div class="sidebar">
+    <div>
+      <div class="section-title">Test Type</div>
+      <div class="test-type-grid">
+        <button class="test-type-btn active" data-type="cpu"><span class="label">CPU</span><span class="desc">Prime / Hash</span></button>
+        <button class="test-type-btn" data-type="io"><span class="label">I/O</span><span class="desc">Async Delay</span></button>
+        <button class="test-type-btn" data-type="mixed"><span class="label">Mixed</span><span class="desc">CPU + I/O</span></button>
+        <button class="test-type-btn" data-type="db-write"><span class="label">DB Write</span><span class="desc">SQLite WAL</span></button>
+        <button class="test-type-btn" data-type="db-read"><span class="label">DB Read</span><span class="desc">SQLite Query</span></button>
+      </div>
+    </div>
+    <div>
+      <div class="section-title">Parameters</div>
+      <div class="param-group">
+        <div class="param-row"><label>Requests</label><input type="number" id="paramCount" value="50" min="1" max="500"></div>
+        <div class="param-row" id="iterationsRow"><label>Iterations</label><input type="number" id="paramIterations" value="1000" min="1"></div>
+        <div class="param-row" id="delayRow" style="display:none"><label>Delay (ms)</label><input type="number" id="paramDelay" value="100" min="1"></div>
+      </div>
+    </div>
+    <button class="run-btn" id="runBtn" onclick="startTest()">Run Test</button>
+    <div class="progress-section" id="progressSection" style="display:none">
+      <div class="progress-bar-track"><div class="progress-bar-fill" id="progressFill"></div></div>
+      <div class="progress-text"><span id="progressLabel">0 / 0</span><span id="progressPercent">0%</span></div>
+    </div>
+    <div style="flex:1"></div>
+    <div>
+      <div class="section-title">Server Info</div>
+      <div id="serverInfo" style="font-size:11px;color:var(--text-dim);line-height:1.8;">Loading...</div>
+    </div>
+  </div>
+  <div class="main">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="label">Avg Latency</div><div class="value" id="statAvg">-<span class="unit">ms</span></div></div>
+      <div class="stat-card"><div class="label">P95 Latency</div><div class="value" id="statP95">-<span class="unit">ms</span></div></div>
+      <div class="stat-card"><div class="label">Throughput</div><div class="value" id="statRps">-<span class="unit">req/s</span></div></div>
+      <div class="stat-card"><div class="label">Success Rate</div><div class="value" id="statSuccess">-<span class="unit">%</span></div></div>
+    </div>
+    <div class="charts-row">
+      <div class="chart-card"><h3>Latency per Request</h3><div class="chart-wrap"><canvas id="latencyChart"></canvas></div></div>
+      <div class="chart-card"><h3>Latency Distribution</h3><div class="chart-wrap"><canvas id="histogramChart"></canvas></div></div>
+    </div>
+    <div class="log-card"><h3>Live Log</h3><div class="log-area" id="logArea"><div class="log-line log-info">Ready. Select a test type and click Run.</div></div></div>
+    <div class="chart-card">
+      <h3>Test History</h3>
+      <table class="history-table"><thead><tr><th>Type</th><th>Requests</th><th>Avg</th><th>P50</th><th>P95</th><th>P99</th><th>Success</th><th>Total</th><th>RPS</th></tr></thead><tbody id="historyBody"></tbody></table>
+      <div class="empty-state" id="historyEmpty">No test results yet</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TAB 2: Node vs Go ==================== -->
+<div class="tab-panel container" id="panel-compare" style="grid-template-columns: 320px 1fr;">
+  <div class="sidebar">
+    <div>
+      <div class="section-title">Compare Settings</div>
+      <div class="param-group">
+        <div class="param-row"><label>Rounds</label><input type="number" id="cmpCount" value="20" min="1" max="200"></div>
+        <div class="param-row"><label>Max (prime)</label><input type="number" id="cmpMax" value="500000" min="1000"></div>
+      </div>
+    </div>
+    <button class="run-btn" id="cmpRunBtn" onclick="startCompare()">Run Comparison</button>
+    <div class="progress-section" id="cmpProgressSection" style="display:none">
+      <div class="progress-bar-track"><div class="progress-bar-fill" id="cmpProgressFill"></div></div>
+      <div class="progress-text"><span id="cmpProgressLabel">0 / 0</span><span id="cmpProgressPercent">0%</span></div>
+    </div>
+    <div style="flex:1"></div>
+    <div>
+      <div class="section-title">How it works</div>
+      <div style="font-size:11px;color:var(--text-dim);line-height:1.7;">
+        Each round runs the same<br>
+        <strong>findPrimes(max)</strong> task on both:<br><br>
+        <span style="color:var(--accent-light);">Node</span> = Worker Thread<br>
+        <span style="color:var(--green);">Go</span> = gRPC + Goroutine<br><br>
+        Sequential per round,<br>
+        measuring wall-clock time.
+      </div>
+    </div>
+  </div>
+  <div class="main">
+    <!-- Score cards -->
+    <div class="compare-stats">
+      <div class="engine-card">
+        <h4 style="color:var(--accent-light);">Node (Worker Thread)</h4>
+        <div class="big-val" style="color:var(--accent-light);" id="cmpNodeWins">-</div>
+        <div style="color:var(--text-dim);font-size:11px;">wins</div>
+        <div class="metrics">
+          <div><div class="metric-label">Avg</div><div class="metric-val" id="cmpNodeAvg">-</div></div>
+          <div><div class="metric-label">P95</div><div class="metric-val" id="cmpNodeP95">-</div></div>
+          <div><div class="metric-label">P50</div><div class="metric-val" id="cmpNodeP50">-</div></div>
+          <div><div class="metric-label">P99</div><div class="metric-val" id="cmpNodeP99">-</div></div>
+        </div>
+      </div>
+      <div class="vs-divider">
+        <div>
+          <div>VS</div>
+          <div class="win-badge win-tie" id="cmpOverallBadge" style="margin-top:12px;">-</div>
+        </div>
+      </div>
+      <div class="engine-card">
+        <h4 style="color:var(--green);">Go (Goroutine)</h4>
+        <div class="big-val" style="color:var(--green);" id="cmpGoWins">-</div>
+        <div style="color:var(--text-dim);font-size:11px;">wins</div>
+        <div class="metrics">
+          <div><div class="metric-label">Avg</div><div class="metric-val" id="cmpGoAvg">-</div></div>
+          <div><div class="metric-label">P95</div><div class="metric-val" id="cmpGoP95">-</div></div>
+          <div><div class="metric-label">P50</div><div class="metric-val" id="cmpGoP50">-</div></div>
+          <div><div class="metric-label">P99</div><div class="metric-val" id="cmpGoP99">-</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="charts-row">
+      <div class="chart-card"><h3>Latency per Round (Node vs Go)</h3><div class="chart-wrap"><canvas id="cmpLineChart"></canvas></div></div>
+      <div class="chart-card"><h3>Latency Distribution</h3><div class="chart-wrap"><canvas id="cmpBarChart"></canvas></div></div>
+    </div>
+
+    <div class="log-card"><h3>Compare Log</h3><div class="log-area" id="cmpLogArea"><div class="log-line log-info">Set rounds and max, then click Run Comparison.</div></div></div>
+
+    <div class="chart-card">
+      <h3>Comparison History</h3>
+      <table class="history-table">
+        <thead><tr><th>Task</th><th>Rounds</th><th>Node Wins</th><th>Go Wins</th><th>Node Avg</th><th>Go Avg</th><th>Winner</th></tr></thead>
+        <tbody id="cmpHistoryBody"></tbody>
+      </table>
+      <div class="empty-state" id="cmpHistoryEmpty">No comparison results yet</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE = '';
+
+// ======== Tab switching ========
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ======== Shared helpers ========
+let isRunning = false;
+
+function logTo(areaId, msg, cls = '') {
+  const area = document.getElementById(areaId);
+  const ts = new Date().toLocaleTimeString('en', { hour12: false, fractionalSecondDigits: 1 });
+  const line = document.createElement('div');
+  line.className = 'log-line ' + cls;
+  line.textContent = `[${ts}] ${msg}`;
+  area.appendChild(line);
+  area.scrollTop = area.scrollHeight;
+}
+
+function updateProgressBar(fillId, labelId, pctId, current, total) {
+  const pct = Math.round((current / total) * 100);
+  document.getElementById(fillId).style.width = pct + '%';
+  document.getElementById(labelId).textContent = `${current} / ${total}`;
+  document.getElementById(pctId).textContent = pct + '%';
+}
+
+async function readSseStream(res, onMessage) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const raw = line.slice(6).trim();
+      if (!raw) continue;
+      try { onMessage(JSON.parse(raw)); } catch {}
+    }
+  }
+}
+
+// ======== Chart defaults ========
+const chartDefaults = {
+  responsive: true, maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { grid: { color: '#2a2d3a' }, ticks: { color: '#8b8fa3', font: { size: 10 } } },
+    y: { grid: { color: '#2a2d3a' }, ticks: { color: '#8b8fa3', font: { size: 10 } } },
+  },
+};
+
+// ==================== TAB 1: Performance Test ====================
+let selectedType = 'cpu';
+let latencyChart, histogramChart;
+let liveLatencies = [];
+
+function initPerfCharts() {
+  latencyChart = new Chart(document.getElementById('latencyChart'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ data: [], borderColor: '#6c5ce7', backgroundColor: 'rgba(108,92,231,0.1)', borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.3 }] },
+    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, title: { display: true, text: 'ms', color: '#8b8fa3' } } }, animation: false },
+  });
+  histogramChart = new Chart(document.getElementById('histogramChart'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ data: [], backgroundColor: 'rgba(108,92,231,0.6)', borderRadius: 4 }] },
+    options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, title: { display: true, text: 'count', color: '#8b8fa3' }, beginAtZero: true } } },
+  });
+}
+
+document.querySelectorAll('.test-type-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (isRunning) return;
+    document.querySelectorAll('.test-type-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedType = btn.dataset.type;
+    document.getElementById('iterationsRow').style.display = selectedType === 'cpu' ? 'flex' : 'none';
+    document.getElementById('delayRow').style.display = selectedType === 'io' ? 'flex' : 'none';
+  });
+});
+
+function buildHistogram(chart, durations, color) {
+  if (durations.length === 0) return;
+  const sorted = [...durations].sort((a, b) => a - b);
+  const mn = sorted[0], mx = sorted[sorted.length - 1];
+  const bc = Math.min(20, Math.max(5, Math.ceil(Math.sqrt(sorted.length))));
+  const step = Math.max(0.1, (mx - mn) / bc);
+  const labels = [], counts = [];
+  for (let i = 0; i < bc; i++) {
+    const lo = mn + i * step;
+    labels.push(lo.toFixed(1));
+    counts.push(sorted.filter(v => v >= lo && (i === bc - 1 ? v <= lo + step : v < lo + step)).length);
+  }
+  chart.data.labels = labels;
+  chart.data.datasets[0].data = counts;
+  if (color) chart.data.datasets[0].backgroundColor = color;
+  chart.update();
+}
+
+async function startTest() {
+  if (isRunning) return;
+  isRunning = true;
+  liveLatencies = [];
+  const btn = document.getElementById('runBtn');
+  btn.textContent = 'Running...'; btn.classList.add('running'); btn.disabled = true;
+  document.getElementById('progressSection').style.display = 'block';
+  updateProgressBar('progressFill', 'progressLabel', 'progressPercent', 0, 1);
+  latencyChart.data.labels = []; latencyChart.data.datasets[0].data = []; latencyChart.update();
+  histogramChart.data.labels = []; histogramChart.data.datasets[0].data = []; histogramChart.update();
+
+  const count = parseInt(document.getElementById('paramCount').value) || 50;
+  const body = { type: selectedType, count, iterations: parseInt(document.getElementById('paramIterations').value) || 1000, delayMs: parseInt(document.getElementById('paramDelay').value) || 100 };
+  logTo('logArea', `Starting ${selectedType.toUpperCase()} test: ${count} requests`, 'log-info');
+
+  try {
+    const res = await fetch(`${API_BASE}/load-test/run-stream`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await readSseStream(res, msg => {
+      if (msg.event === 'start') logTo('logArea', `Test started: ${msg.type} x ${msg.count}`, 'log-info');
+      if (msg.event === 'progress') {
+        updateProgressBar('progressFill', 'progressLabel', 'progressPercent', msg.index + 1, msg.total);
+        liveLatencies.push(msg.ms);
+        latencyChart.data.labels.push(msg.index);
+        latencyChart.data.datasets[0].data.push(msg.ms);
+        if (latencyChart.data.labels.length > 500) { latencyChart.data.labels.shift(); latencyChart.data.datasets[0].data.shift(); }
+        latencyChart.update();
+        if (!msg.ok) logTo('logArea', `#${msg.index} FAIL (${msg.ms}ms)`, 'log-fail');
+        else if (msg.index % Math.max(1, Math.floor(msg.total / 20)) === 0)
+          logTo('logArea', `#${msg.index} OK ${msg.ms}ms  [${msg.fulfilled}ok/${msg.rejected}fail]`, 'log-ok');
+      }
+      if (msg.event === 'done') {
+        document.getElementById('statAvg').innerHTML = `${msg.avgMs}<span class="unit">ms</span>`;
+        document.getElementById('statP95').innerHTML = `${msg.p95}<span class="unit">ms</span>`;
+        const rps = msg.totalMs > 0 ? Math.round((msg.fulfilled / msg.totalMs) * 1000 * 10) / 10 : 0;
+        document.getElementById('statRps').innerHTML = `${rps}<span class="unit">req/s</span>`;
+        const sr = msg.total > 0 ? Math.round((msg.fulfilled / msg.total) * 1000) / 10 : 0;
+        document.getElementById('statSuccess').innerHTML = `${sr}<span class="unit">%</span>`;
+        buildHistogram(histogramChart, liveLatencies);
+        // history
+        document.getElementById('historyEmpty').style.display = 'none';
+        const bc = msg.type.startsWith('db') ? 'badge-db' : msg.type === 'mixed' ? 'badge-mixed' : msg.type === 'io' ? 'badge-io' : 'badge-cpu';
+        const row = document.createElement('tr');
+        row.innerHTML = `<td><span class="badge ${bc}">${msg.type.toUpperCase()}</span></td><td>${msg.total}</td><td>${msg.avgMs}ms</td><td>${msg.p50}ms</td><td>${msg.p95}ms</td><td>${msg.p99}ms</td><td>${sr}%</td><td>${msg.totalMs}ms</td><td>${rps}</td>`;
+        const hb = document.getElementById('historyBody');
+        hb.insertBefore(row, hb.firstChild);
+        logTo('logArea', '', '');
+        logTo('logArea', `Done: ${msg.fulfilled}/${msg.total} succeeded in ${msg.totalMs}ms`, 'log-info');
+        logTo('logArea', `  avg=${msg.avgMs}ms  p50=${msg.p50}ms  p95=${msg.p95}ms  p99=${msg.p99}ms`, 'log-warn');
+      }
+    });
+  } catch (err) { logTo('logArea', `Error: ${err.message}`, 'log-fail'); }
+  isRunning = false; btn.textContent = 'Run Test'; btn.classList.remove('running'); btn.disabled = false;
+}
+
+// ==================== TAB 2: Node vs Go ====================
+let cmpLineChart, cmpBarChart;
+
+function initCompareCharts() {
+  cmpLineChart = new Chart(document.getElementById('cmpLineChart'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'Node', data: [], borderColor: '#6c5ce7', backgroundColor: 'rgba(108,92,231,0.1)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#6c5ce7', fill: false, tension: 0.3 },
+        { label: 'Go', data: [], borderColor: '#00b894', backgroundColor: 'rgba(0,184,148,0.1)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#00b894', fill: false, tension: 0.3 },
+      ],
+    },
+    options: {
+      ...chartDefaults,
+      plugins: { legend: { display: true, labels: { color: '#8b8fa3', font: { size: 11 } } } },
+      scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, title: { display: true, text: 'ms', color: '#8b8fa3' } } },
+      animation: false,
+    },
+  });
+
+  cmpBarChart = new Chart(document.getElementById('cmpBarChart'), {
+    type: 'bar',
+    data: {
+      labels: ['Avg', 'P50', 'P95', 'P99', 'Min', 'Max'],
+      datasets: [
+        { label: 'Node', data: [0,0,0,0,0,0], backgroundColor: 'rgba(108,92,231,0.6)', borderRadius: 4 },
+        { label: 'Go', data: [0,0,0,0,0,0], backgroundColor: 'rgba(0,184,148,0.6)', borderRadius: 4 },
+      ],
+    },
+    options: {
+      ...chartDefaults,
+      plugins: { legend: { display: true, labels: { color: '#8b8fa3', font: { size: 11 } } } },
+      scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, title: { display: true, text: 'ms', color: '#8b8fa3' }, beginAtZero: true } },
+    },
+  });
+}
+
+async function startCompare() {
+  if (isRunning) return;
+  isRunning = true;
+  const btn = document.getElementById('cmpRunBtn');
+  btn.textContent = 'Running...'; btn.classList.add('running'); btn.disabled = true;
+  document.getElementById('cmpProgressSection').style.display = 'block';
+  updateProgressBar('cmpProgressFill', 'cmpProgressLabel', 'cmpProgressPercent', 0, 1);
+
+  cmpLineChart.data.labels = [];
+  cmpLineChart.data.datasets[0].data = [];
+  cmpLineChart.data.datasets[1].data = [];
+  cmpLineChart.update();
+
+  const count = parseInt(document.getElementById('cmpCount').value) || 20;
+  const max = parseInt(document.getElementById('cmpMax').value) || 500000;
+
+  logTo('cmpLogArea', `Starting Node vs Go comparison: ${count} rounds, max=${max}`, 'log-info');
+
+  try {
+    const res = await fetch(`${API_BASE}/load-test/compare-stream`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count, max }),
+    });
+
+    await readSseStream(res, msg => {
+      if (msg.event === 'error') {
+        logTo('cmpLogArea', msg.message, 'log-fail');
+      }
+
+      if (msg.event === 'progress') {
+        updateProgressBar('cmpProgressFill', 'cmpProgressLabel', 'cmpProgressPercent', msg.index + 1, msg.total);
+        cmpLineChart.data.labels.push(msg.index);
+        cmpLineChart.data.datasets[0].data.push(msg.nodeMs);
+        cmpLineChart.data.datasets[1].data.push(msg.goMs);
+        cmpLineChart.update();
+
+        // live score
+        document.getElementById('cmpNodeWins').textContent = msg.nodeWins;
+        document.getElementById('cmpGoWins').textContent = msg.goWins;
+
+        const winCls = msg.winner === 'node' ? 'log-ok' : msg.winner === 'go' ? 'log-warn' : 'log-fail';
+        const winIcon = msg.winner === 'node' ? 'NODE' : msg.winner === 'go' ? 'GO  ' : 'ERR ';
+        if (msg.index % Math.max(1, Math.floor(msg.total / 30)) === 0 || msg.winner === 'error') {
+          logTo('cmpLogArea', `#${msg.index} [${winIcon}]  Node=${msg.nodeMs}ms  Go=${msg.goMs}ms  (${msg.nodeWins}:${msg.goWins})`, winCls);
+        }
+      }
+
+      if (msg.event === 'done') {
+        const n = msg.node, g = msg.go;
+        document.getElementById('cmpNodeAvg').textContent = n.avgMs + 'ms';
+        document.getElementById('cmpNodeP50').textContent = n.p50 + 'ms';
+        document.getElementById('cmpNodeP95').textContent = n.p95 + 'ms';
+        document.getElementById('cmpNodeP99').textContent = n.p99 + 'ms';
+        document.getElementById('cmpGoAvg').textContent = g.avgMs + 'ms';
+        document.getElementById('cmpGoP50').textContent = g.p50 + 'ms';
+        document.getElementById('cmpGoP95').textContent = g.p95 + 'ms';
+        document.getElementById('cmpGoP99').textContent = g.p99 + 'ms';
+
+        // bar chart
+        cmpBarChart.data.datasets[0].data = [n.avgMs, n.p50, n.p95, n.p99, n.min, n.max];
+        cmpBarChart.data.datasets[1].data = [g.avgMs, g.p50, g.p95, g.p99, g.min, g.max];
+        cmpBarChart.update();
+
+        // overall winner badge
+        const badge = document.getElementById('cmpOverallBadge');
+        if (msg.nodeWins > msg.goWins) {
+          badge.textContent = 'Node Wins'; badge.className = 'win-badge win-node';
+        } else if (msg.goWins > msg.nodeWins) {
+          badge.textContent = 'Go Wins'; badge.className = 'win-badge win-go';
+        } else {
+          badge.textContent = 'Tie'; badge.className = 'win-badge win-tie';
+        }
+
+        // history
+        document.getElementById('cmpHistoryEmpty').style.display = 'none';
+        const winner = msg.nodeWins > msg.goWins ? 'Node' : msg.goWins > msg.nodeWins ? 'Go' : 'Tie';
+        const wc = winner === 'Node' ? 'badge-node' : winner === 'Go' ? 'badge-go' : '';
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${msg.task}</td><td>${msg.total}</td><td>${msg.nodeWins}</td><td>${msg.goWins}</td><td>${n.avgMs}ms</td><td>${g.avgMs}ms</td><td><span class="badge ${wc}">${winner}</span></td>`;
+        const hb = document.getElementById('cmpHistoryBody');
+        hb.insertBefore(row, hb.firstChild);
+
+        logTo('cmpLogArea', '', '');
+        logTo('cmpLogArea', `Done in ${msg.totalMs}ms — Node ${msg.nodeWins} : ${msg.goWins} Go (${msg.errors} errors)`, 'log-info');
+        logTo('cmpLogArea', `  Node: avg=${n.avgMs}ms p50=${n.p50}ms p95=${n.p95}ms p99=${n.p99}ms`, 'log-warn');
+        logTo('cmpLogArea', `  Go:   avg=${g.avgMs}ms p50=${g.p50}ms p95=${g.p95}ms p99=${g.p99}ms`, 'log-warn');
+      }
+    });
+  } catch (err) { logTo('cmpLogArea', `Error: ${err.message}`, 'log-fail'); }
+
+  isRunning = false; btn.textContent = 'Run Comparison'; btn.classList.remove('running'); btn.disabled = false;
+}
+
+// ======== Server info ========
+async function fetchServerInfo() {
+  try {
+    const [ping, stats] = await Promise.all([
+      fetch(`${API_BASE}/load-test/ping`).then(r => r.json()),
+      fetch(`${API_BASE}/queue-stats`).then(r => r.json()),
+    ]);
+    document.getElementById('statusDot').className = 'status-dot';
+    document.getElementById('statusText').textContent = `engine: ${ping.engine}`;
+    const mem = stats.memory;
+    document.getElementById('serverInfo').innerHTML = `Heap: ${mem.heapUsed}/${mem.heapTotal} MB<br>RSS: ${mem.rss} MB<br>Active: ${stats.activeRequests}<br>Processed: ${stats.totalProcessed}<br>Uptime: ${Math.floor(stats.uptime)}s`;
+  } catch {
+    document.getElementById('statusDot').className = 'status-dot offline';
+    document.getElementById('statusText').textContent = 'offline';
+  }
+}
+
+// ======== Boot ========
+initPerfCharts();
+initCompareCharts();
+fetchServerInfo();
+setInterval(fetchServerInfo, 5000);
+</script>
+</body>
+</html>

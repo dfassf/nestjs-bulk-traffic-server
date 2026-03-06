@@ -3,14 +3,37 @@ import { QueueService } from './queue.service';
 import { MemoryService } from './memory.service';
 import { BatchService } from './batch.service';
 import { WorkerPoolService } from './worker-pool.service';
+import { QueueOptionsParser } from './queue-options.parser';
+import { QueueStatsService } from './queue-stats.service';
+import { QueueSnapshotManager } from './queue-snapshot.manager';
+import { QueueStateHolder } from './queue-state.holder';
+import { QueueProcessorService } from './queue-processor.service';
+import { WorkerHealthService } from './worker-health.service';
+import { WorkerTaskRouterService } from './worker-task-router.service';
 import { QueueTask, WorkloadType } from './interfaces/queue-task.interface';
+
+const ALL_PROVIDERS = [
+  QueueService,
+  QueueStateHolder,
+  QueueProcessorService,
+  MemoryService,
+  BatchService,
+  WorkerPoolService,
+  QueueOptionsParser,
+  QueueStatsService,
+  QueueSnapshotManager,
+  WorkerHealthService,
+  WorkerTaskRouterService,
+];
 
 describe('QueueService', () => {
   const originalAllowCustomWorkload = process.env.ALLOW_CUSTOM_WORKLOAD;
 
   let service: QueueService;
+  let processor: QueueProcessorService;
   let memoryService: MemoryService;
   let workerPoolService: WorkerPoolService;
+  let statsService: QueueStatsService;
 
   const createTask = (id: number): QueueTask => ({
     id,
@@ -27,12 +50,14 @@ describe('QueueService', () => {
     process.env.ALLOW_CUSTOM_WORKLOAD = 'false';
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [QueueService, MemoryService, BatchService, WorkerPoolService],
+      providers: ALL_PROVIDERS,
     }).compile();
 
     service = module.get<QueueService>(QueueService);
+    processor = module.get<QueueProcessorService>(QueueProcessorService);
     memoryService = module.get<MemoryService>(MemoryService);
     workerPoolService = module.get<WorkerPoolService>(WorkerPoolService);
+    statsService = module.get<QueueStatsService>(QueueStatsService);
   });
 
   afterEach(async () => {
@@ -48,7 +73,7 @@ describe('QueueService', () => {
   describe('enqueue', () => {
     it('작업을 큐에 추가하고 실행해야 한다', async () => {
       const promise = service.enqueue(() => Promise.resolve('success'));
-      (service as any).processQueue();
+      processor.processQueue();
 
       await expect(promise).resolves.toBe('success');
     });
@@ -72,7 +97,7 @@ describe('QueueService', () => {
         { priority: 10 },
       );
 
-      (service as any).processQueue();
+      processor.processQueue();
       await Promise.all([lowPromise, highPromise]);
 
       expect(order[0]).toBe(2);
@@ -90,9 +115,9 @@ describe('QueueService', () => {
     });
 
     it('큐 오버플로우 계산에 배치 큐 작업도 포함해야 한다', async () => {
-      const queueService = service as any;
-      queueService.normalPriorityQueue = Array(2999).fill({});
-      queueService.batchQueues.set('batch-overflow', {
+      const state = (service as any).state as QueueStateHolder;
+      state.normalPriorityQueue.length = 2999;
+      state.batchQueues.set('batch-overflow', {
         tasks: [createTask(1)],
         category: 'batch-overflow',
         totalSize: 1,
@@ -117,7 +142,7 @@ describe('QueueService', () => {
         get: () => true,
       });
 
-      (service as any).processQueue();
+      processor.processQueue();
       await expect(normalPromise).resolves.toBe('normal');
 
       const pausedStats = service.getQueueStats();
@@ -128,7 +153,7 @@ describe('QueueService', () => {
         get: () => false,
       });
 
-      (service as any).processQueue();
+      processor.processQueue();
       await expect(lowPromise).resolves.toBe('low');
     });
 
@@ -146,7 +171,7 @@ describe('QueueService', () => {
         '작업 실행 시간 초과 (10ms)',
       );
 
-      (service as any).processQueue();
+      processor.processQueue();
       await jest.advanceTimersByTimeAsync(20);
       await assertion;
     });
@@ -162,7 +187,7 @@ describe('QueueService', () => {
         workloadType: 'gpu',
       });
 
-      (service as any).processQueue();
+      processor.processQueue();
       await expect(promise).resolves.toBe('fallback-ok');
       expect(addTaskSpy).not.toHaveBeenCalled();
       expect(service.getQueueStats().workloadGeneralQueueFallbackCount).toBe(1);
@@ -174,8 +199,7 @@ describe('QueueService', () => {
         get: () => true,
       });
 
-      const internal = service as any;
-      const eligible = internal.isWorkerEligibleTask({
+      const eligible = (processor as any).isWorkerEligibleTask({
         ...createTask(99),
         workloadType: WorkloadType.CPU,
       });
@@ -203,16 +227,17 @@ describe('QueueService', () => {
     it('custom workload 활성화 시 functionCode 입력을 허용해야 한다', async () => {
       process.env.ALLOW_CUSTOM_WORKLOAD = 'true';
       const module: TestingModule = await Test.createTestingModule({
-        providers: [QueueService, MemoryService, BatchService, WorkerPoolService],
+        providers: ALL_PROVIDERS,
       }).compile();
 
       const enabledService = module.get<QueueService>(QueueService);
+      const enabledProcessor = module.get<QueueProcessorService>(QueueProcessorService);
       const promise = enabledService.enqueue(() => Promise.resolve('ok'), {
         workloadType: WorkloadType.CUSTOM,
         functionCode: 'return 1;',
       });
 
-      (enabledService as any).processQueue();
+      enabledProcessor.processQueue();
       await expect(promise).resolves.toBe('ok');
       await enabledService.onModuleDestroy();
 
@@ -244,14 +269,14 @@ describe('QueueService', () => {
   describe('stats', () => {
     it('누적 통계와 최근 통계를 분리해 유지해야 한다', async () => {
       const promise = service.enqueue(() => Promise.resolve('success'));
-      (service as any).processQueue();
+      processor.processQueue();
       await promise;
 
       const beforeLog = service.getQueueStats();
       expect(beforeLog.totalProcessed).toBe(1);
       expect(beforeLog.recentProcessed).toBe(1);
 
-      (service as any).logStats();
+      statsService.logStats(0, 0, 0);
 
       const afterLog = service.getQueueStats();
       expect(afterLog.totalProcessed).toBe(1);

@@ -1,5 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WorkerPoolService } from './worker-pool.service';
+import { WorkerHealthService } from './worker-health.service';
+import { WorkerTaskRouterService } from './worker-task-router.service';
 import {
   QueueTask,
   WorkerTaskData,
@@ -22,7 +24,7 @@ describe('WorkerPoolService', () => {
 
   const createService = async (): Promise<WorkerPoolService> => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [WorkerPoolService],
+      providers: [WorkerPoolService, WorkerHealthService, WorkerTaskRouterService],
     }).compile();
 
     return module.get<WorkerPoolService>(WorkerPoolService);
@@ -127,13 +129,17 @@ describe('WorkerPoolService', () => {
   });
 
   it('타입별 동시성 제한을 넘기면 dispatch가 차단되어야 한다', async () => {
-    const service = await createService();
-    const internal = service as any;
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [WorkerPoolService, WorkerHealthService, WorkerTaskRouterService],
+    }).compile();
 
-    internal.activeByType[WorkloadType.MEMORY] = internal.memoryConcurrencyLimit;
+    const router = module.get<WorkerTaskRouterService>(WorkerTaskRouterService);
+    const routerInternal = router as any;
 
-    expect(internal.canDispatchType(WorkloadType.MEMORY)).toBe(false);
-    expect(internal.canDispatchType(WorkloadType.CPU)).toBe(true);
+    routerInternal.activeByType[WorkloadType.MEMORY] = routerInternal.memoryConcurrencyLimit;
+
+    expect(router.canDispatchType(WorkloadType.MEMORY)).toBe(false);
+    expect(router.canDispatchType(WorkloadType.CPU)).toBe(true);
   });
 
   it('워커 없이 큐 작업을 처리할 수 있어야 한다', async () => {

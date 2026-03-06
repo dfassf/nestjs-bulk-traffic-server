@@ -1,52 +1,31 @@
 import { EngineRouterService } from './engine-router.service';
-import { WorkerPoolService } from './worker-pool.service';
 import { GoEngineClient } from './go-engine.client';
-import { BenchmarkService } from './benchmark.service';
 
 describe('EngineRouterService', () => {
-  let workerPoolService: WorkerPoolService;
   let goEngineClient: GoEngineClient;
-  let benchmarkService: BenchmarkService;
 
   beforeEach(() => {
-    workerPoolService = {} as WorkerPoolService;
     goEngineClient = {
       execute: jest.fn(),
     } as unknown as GoEngineClient;
-    benchmarkService = new BenchmarkService();
   });
 
   it('should default to node engine', () => {
     delete process.env.WORKER_ENGINE;
-    const service = new EngineRouterService(
-      workerPoolService,
-      goEngineClient,
-      benchmarkService,
-    );
+    const service = new EngineRouterService(goEngineClient);
     expect(service.getEngine()).toBe('node');
-    expect(service.isGoEnabled()).toBe(false);
   });
 
   it('should use go engine when WORKER_ENGINE=go', () => {
     process.env.WORKER_ENGINE = 'go';
-    const service = new EngineRouterService(
-      workerPoolService,
-      goEngineClient,
-      benchmarkService,
-    );
+    const service = new EngineRouterService(goEngineClient);
     expect(service.getEngine()).toBe('go');
-    expect(service.isGoEnabled()).toBe(true);
   });
 
   it('should use both engine when WORKER_ENGINE=both', () => {
     process.env.WORKER_ENGINE = 'both';
-    const service = new EngineRouterService(
-      workerPoolService,
-      goEngineClient,
-      benchmarkService,
-    );
+    const service = new EngineRouterService(goEngineClient);
     expect(service.getEngine()).toBe('both');
-    expect(service.isGoEnabled()).toBe(true);
   });
 
   it('should dispatch to go engine', async () => {
@@ -61,11 +40,7 @@ describe('EngineRouterService', () => {
     };
     (goEngineClient.execute as jest.Mock).mockResolvedValue(mockResult);
 
-    const service = new EngineRouterService(
-      workerPoolService,
-      goEngineClient,
-      benchmarkService,
-    );
+    const service = new EngineRouterService(goEngineClient);
 
     const task = {
       id: 1,

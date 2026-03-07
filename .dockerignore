@@ -9,3 +9,9 @@ logs
 .env.*
 .DS_Store
 coverage
+go-engine/
+benchmark/
+docs/
+*.md
+.bench.sqlite
+.queue-snapshot.json

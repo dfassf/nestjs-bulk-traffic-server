@@ -3,7 +3,8 @@ import { Observable, Subject } from 'rxjs';
 import { QueueService } from '../queue.service';
 import { EngineRouterService } from '../engine-router.service';
 import { WorkloadType } from '../interfaces/queue-task.interface';
-import { SqliteBenchService } from '../sqlite-bench.service';
+import { BenchDriver, BENCH_DRIVER } from '../bench-driver.interface';
+import { Inject } from '@nestjs/common';
 
 interface SseMessage {
   data: string;
@@ -14,7 +15,7 @@ export class LoadTestController {
   constructor(
     private readonly queueService: QueueService,
     private readonly engineRouter: EngineRouterService,
-    private readonly sqliteBench: SqliteBenchService,
+    @Inject(BENCH_DRIVER) private readonly bench: BenchDriver,
   ) {}
 
   @Post('cpu')
@@ -173,30 +174,30 @@ export class LoadTestController {
   @HttpCode(200)
   dbWrite(@Body() body: { count?: number }) {
     const count = Math.min(body.count || 100, 100_000_000);
-    return this.sqliteBench.benchWrite(count);
+    return this.bench.benchWrite(count);
   }
 
   @Post('db-read')
   @HttpCode(200)
   dbRead(@Body() body: { count?: number }) {
     const count = Math.min(body.count || 100, 100_000_000);
-    return this.sqliteBench.benchRead(count);
+    return this.bench.benchRead(count);
   }
 
   @Get('db-rows')
-  dbRows() {
-    return { rows: this.sqliteBench.getRowCount() };
+  async dbRows() {
+    return { rows: await this.bench.getRowCount() };
   }
 
   @Delete('db-reset')
-  dbReset() {
-    this.sqliteBench.reset();
+  async dbReset() {
+    await this.bench.reset();
     return { ok: true };
   }
 
   @Get('ping')
   ping() {
-    return { ok: true, engine: this.engineRouter.getEngine(), timestamp: Date.now() };
+    return { ok: true, engine: this.engineRouter.getEngine(), dbDriver: process.env.BENCH_DB_DRIVER || 'sqlite', timestamp: Date.now() };
   }
 
   @Post('run-stream')
@@ -282,11 +283,13 @@ export class LoadTestController {
   @HttpCode(200)
   @Sse()
   compareStream(
-    @Body() body: { count?: number; max?: number },
+    @Body() body: { count?: number; max?: number; testType?: 'cpu' | 'io'; delayMs?: number },
   ): Observable<MessageEvent> {
     const subject = new Subject<MessageEvent>();
     const count = Math.min(body.count || 20, 200);
     const max = body.max || 500_000;
+    const testType = body.testType || 'cpu';
+    const delayMs = body.delayMs || 100;
 
     const emit = (event: string, payload: Record<string, unknown>) => {
       subject.next({ data: JSON.stringify({ event, ...payload }) } as MessageEvent);
@@ -294,7 +297,7 @@ export class LoadTestController {
 
     const run = async () => {
       const engineMode = this.engineRouter.getEngine();
-      emit('start', { count, max, engine: engineMode, timestamp: Date.now() });
+      emit('start', { count, max, testType, delayMs, engine: engineMode, timestamp: Date.now() });
 
       if (engineMode !== 'both') {
         emit('error', { message: 'WORKER_ENGINE=both 모드에서만 사용 가능합니다.' });
@@ -311,26 +314,50 @@ export class LoadTestController {
         let winner = 'error';
 
         try {
-          const nodeStart = performance.now();
-          await this.queueService.enqueue(
-            () => Promise.resolve(),
-            { priority: 5, workloadType: WorkloadType.CPU, params: { max } },
-          );
-          nodeMs = Math.round((performance.now() - nodeStart) * 100) / 100;
+          if (testType === 'io') {
+            // Node: 이벤트 루프 기반 비동기 I/O (setTimeout)
+            const nodeStart = performance.now();
+            await this.simulateIO(delayMs);
+            nodeMs = Math.round((performance.now() - nodeStart) * 100) / 100;
 
-          const goTask = {
-            id: Date.now() + i,
-            requestId: `compare-go-${i}`,
-            timestamp: Date.now(),
-            priority: 0,
-            workloadType: 'cpu' as any,
-            params: { max },
-            timeout: 30000,
-          } as any;
+            // Go: gRPC → goroutine 기반 I/O (time.After)
+            const goTask = {
+              id: Date.now() + i,
+              requestId: `compare-io-go-${i}`,
+              timestamp: Date.now(),
+              priority: 0,
+              workloadType: 'io' as any,
+              params: { delay_ms: delayMs },
+              timeout: 60000,
+            } as any;
 
-          const goStart = performance.now();
-          await this.engineRouter.dispatchToGo(goTask);
-          goMs = Math.round((performance.now() - goStart) * 100) / 100;
+            const goStart = performance.now();
+            await this.engineRouter.dispatchToGo(goTask);
+            goMs = Math.round((performance.now() - goStart) * 100) / 100;
+          } else {
+            // Node: Worker Thread 기반 CPU 연산 (findPrimes)
+            const nodeStart = performance.now();
+            await this.queueService.enqueue(
+              () => Promise.resolve(),
+              { priority: 5, workloadType: WorkloadType.CPU, params: { max } },
+            );
+            nodeMs = Math.round((performance.now() - nodeStart) * 100) / 100;
+
+            // Go: gRPC → goroutine 기반 CPU 연산 (findPrimes)
+            const goTask = {
+              id: Date.now() + i,
+              requestId: `compare-go-${i}`,
+              timestamp: Date.now(),
+              priority: 0,
+              workloadType: 'cpu' as any,
+              params: { max },
+              timeout: 30000,
+            } as any;
+
+            const goStart = performance.now();
+            await this.engineRouter.dispatchToGo(goTask);
+            goMs = Math.round((performance.now() - goStart) * 100) / 100;
+          }
 
           winner = nodeMs <= goMs ? 'node' : 'go';
         } catch {
@@ -363,9 +390,12 @@ export class LoadTestController {
 
       const pctl = (arr: number[], p: number) => arr[Math.floor(arr.length * p)] ?? 0;
 
+      const taskLabel = testType === 'io' ? `asyncIO(delay=${delayMs}ms)` : `findPrimes(max=${max})`;
+
       emit('done', {
         total: count,
-        task: `findPrimes(max=${max})`,
+        testType,
+        task: taskLabel,
         totalMs,
         nodeWins: results.filter(r => r.winner === 'node').length,
         goWins: results.filter(r => r.winner === 'go').length,
@@ -413,9 +443,9 @@ export class LoadTestController {
           { priority: 0, params: { delay_ms: body.delayMs || 100 } },
         );
       case 'db-write':
-        return this.sqliteBench.benchWrite(body.count || 100);
+        return this.bench.benchWrite(body.count || 100);
       case 'db-read':
-        return this.sqliteBench.benchRead(body.count || 100);
+        return this.bench.benchRead(body.count || 100);
       case 'mixed':
       default: {
         const cpuRatio = body.cpuRatio ?? 0.5;

@@ -1,0 +1,114 @@
+services:
+  go-engine:
+    build:
+      context: ./go-engine
+      dockerfile: Dockerfile
+    container_name: go-engine
+    restart: unless-stopped
+    environment:
+      - GO_ENGINE_PORT=50051
+      - GO_METRICS_PORT=9090
+      - GO_POOL_A_WORKERS=4
+      - GO_POOL_B_WORKERS=100
+      - GO_POOL_C_WORKERS=10
+      - GO_POOL_B_RATE_LIMIT=100
+      - GO_POOL_C_RATE_LIMIT=10
+    networks:
+      - internal
+    expose:
+      - "50051"
+      - "9090"
+    healthcheck:
+      test: ["CMD", "/usr/bin/wget", "--spider", "-q", "http://localhost:9090/metrics"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: bench-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=bench
+      - POSTGRES_USER=bench
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-bench}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bench"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1"
+
+  nestjs-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nestjs-app
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - WORKER_ENGINE=go
+      - GO_ENGINE_HOST=go-engine
+      - GO_ENGINE_PORT=50051
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - UV_THREADPOOL_SIZE=64
+      - DISABLE_WORKERS=false
+      - WORKER_POOL_SIZE=4
+      - QUEUE_CONCURRENT_TASKS=50
+      - QUEUE_MAX_CONCURRENT_REQUESTS=200
+      - QUEUE_TASK_TIMEOUT_MS=15000
+      - QUEUE_EXECUTION_TIMEOUT_MS=10000
+      - QUEUE_OVERFLOW_THRESHOLD=3000
+      - QUEUE_PERSISTENCE=file
+      - QUEUE_SNAPSHOT_PATH=/app/data/.queue-snapshot.json
+      - BENCH_DB_DRIVER=${BENCH_DB_DRIVER:-sqlite}
+      - BENCH_DB_PATH=/app/data/.bench.sqlite
+      - BENCH_PG_HOST=postgres
+      - BENCH_PG_PORT=5432
+      - BENCH_PG_DATABASE=bench
+      - BENCH_PG_USER=bench
+      - BENCH_PG_PASSWORD=${DB_PASSWORD:-bench}
+    volumes:
+      - app-data:/app/data
+    networks:
+      - internal
+    depends_on:
+      go-engine:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+          cpus: "2"
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  app-data:
+    driver: local
+  pg-data:
+    driver: local

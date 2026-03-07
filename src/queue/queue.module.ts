@@ -11,7 +11,9 @@ import { WorkerHealthService } from './worker-health.service';
 import { PersistenceModule } from './persistence/persistence.module';
 import { GoEngineClient } from './go-engine.client';
 import { EngineRouterService } from './engine-router.service';
-import { SqliteBenchService } from './sqlite-bench.service';
+import { BENCH_DRIVER } from './bench-driver.interface';
+import { SqliteBenchDriver } from './sqlite-bench.driver';
+import { PgBenchDriver } from './pg-bench.driver';
 import { QueueSnapshotManager } from './queue-snapshot.manager';
 import { QueueStateHolder } from './queue-state.holder';
 import { QueueProcessorService } from './queue-processor.service';
@@ -34,7 +36,16 @@ import { WorkerTaskRouterService } from './worker-task-router.service';
     WorkerTaskRouterService,
     GoEngineClient,
     EngineRouterService,
-    SqliteBenchService,
+    {
+      provide: BENCH_DRIVER,
+      useFactory: async () => {
+        const driver = process.env.BENCH_DB_DRIVER === 'postgresql'
+          ? new PgBenchDriver()
+          : new SqliteBenchDriver();
+        await driver.init();
+        return driver;
+      },
+    },
   ],
   exports: [QueueService, MemoryService, WorkerPoolService, EngineRouterService],
 })

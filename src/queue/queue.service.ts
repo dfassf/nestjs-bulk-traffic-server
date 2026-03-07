@@ -113,25 +113,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         timeout,
       };
 
-      const timeoutId = setTimeout(() => {
-        if (this.state.removeTaskFromQueues(task)) {
-          this.statsService.incrementTimeout();
-          reject(new Error('큐 대기 시간 초과'));
-        }
-      }, this.state.taskTimeoutMs);
-
-      const originalResolve = task.resolve;
-      const originalReject = task.reject;
-
-      task.resolve = (value: unknown) => {
-        clearTimeout(timeoutId);
-        originalResolve(value);
-      };
-
-      task.reject = (reason?: Error | string) => {
-        clearTimeout(timeoutId);
-        originalReject(reason);
-      };
+      this.processor.wrapTaskWithQueueTimeout(task, this.state.taskTimeoutMs);
 
       if (
         normalized.batch &&

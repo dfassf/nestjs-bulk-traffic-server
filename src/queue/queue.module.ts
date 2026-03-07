@@ -17,7 +17,10 @@ import { PgBenchDriver } from './pg-bench.driver';
 import { QueueSnapshotManager } from './queue-snapshot.manager';
 import { QueueStateHolder } from './queue-state.holder';
 import { QueueProcessorService } from './queue-processor.service';
+import { SimulationService } from './simulation.service';
 import { WorkerTaskRouterService } from './worker-task-router.service';
+import { LoadTestRunnerService } from './load-test/load-test-runner.service';
+import { LoadTestCompareService } from './load-test/load-test-compare.service';
 
 @Module({
   imports: [PersistenceModule],
@@ -34,8 +37,11 @@ import { WorkerTaskRouterService } from './worker-task-router.service';
     QueueSnapshotManager,
     WorkerHealthService,
     WorkerTaskRouterService,
+    SimulationService,
     GoEngineClient,
     EngineRouterService,
+    LoadTestRunnerService,
+    LoadTestCompareService,
     {
       provide: BENCH_DRIVER,
       useFactory: async () => {

@@ -3,7 +3,6 @@ package pool
 import (
 	"context"
 	"fmt"
-	"math"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -12,95 +11,8 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// TaskResult holds the outcome of a processed task.
-type TaskResult struct {
-	TaskID     string
-	Success    bool
-	Result     []byte
-	Error      string
-	DurationMs int64
-}
-
 // Handler processes a task payload and returns a result.
 type Handler func(ctx context.Context, task *Task) ([]byte, error)
-
-// RetryConfig controls retry behavior.
-type RetryConfig struct {
-	MaxRetries int
-	BaseDelay  time.Duration
-	MaxDelay   time.Duration
-}
-
-// PoolConfig configures a worker pool.
-type PoolConfig struct {
-	Name      string
-	Workers   int
-	MaxQueue  int
-	RateLimit float64 // requests per second, 0 = unlimited
-	Timeout   time.Duration
-	Retry     RetryConfig
-}
-
-// Stats holds runtime statistics for a pool.
-type Stats struct {
-	ActiveWorkers int32
-	QueueLength   int32
-	Processed     int64
-	Failed        int64
-	TotalLatency  int64 // sum of all durations in ms (for avg calculation)
-	Latencies     []int64
-	mu            sync.Mutex
-}
-
-func (s *Stats) recordLatency(ms int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Latencies = append(s.Latencies, ms)
-	// Keep only last 1000 for P99
-	if len(s.Latencies) > 1000 {
-		s.Latencies = s.Latencies[len(s.Latencies)-1000:]
-	}
-}
-
-func (s *Stats) AvgLatencyMs() float64 {
-	total := atomic.LoadInt64(&s.TotalLatency)
-	processed := atomic.LoadInt64(&s.Processed)
-	if processed == 0 {
-		return 0
-	}
-	return float64(total) / float64(processed)
-}
-
-func (s *Stats) P99LatencyMs() float64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := len(s.Latencies)
-	if n == 0 {
-		return 0
-	}
-	// Simple sorted approach for p99
-	sorted := make([]int64, n)
-	copy(sorted, s.Latencies)
-	sortInt64s(sorted)
-	idx := int(math.Ceil(float64(n)*0.99)) - 1
-	if idx >= n {
-		idx = n - 1
-	}
-	return float64(sorted[idx])
-}
-
-func sortInt64s(a []int64) {
-	// insertion sort is fine for <=1000 elements
-	for i := 1; i < len(a); i++ {
-		key := a[i]
-		j := i - 1
-		for j >= 0 && a[j] > key {
-			a[j+1] = a[j]
-			j--
-		}
-		a[j+1] = key
-	}
-}
 
 // Pool manages a set of goroutine workers with a priority queue.
 type Pool struct {
@@ -150,100 +62,6 @@ func (p *Pool) Submit(task *Task) error {
 	return nil
 }
 
-// SubmitSync enqueues a task and waits for the result.
-func (p *Pool) SubmitSync(ctx context.Context, task *Task) TaskResult {
-	ch := make(chan TaskResult, 1)
-
-	wrappedHandler := p.handler
-	originalHandler := p.handler
-
-	// Temporarily use a handler that sends result to channel
-	taskCopy := *task
-	go func() {
-		if p.queue.QueueLen() >= p.config.MaxQueue {
-			ch <- TaskResult{
-				TaskID:  task.ID,
-				Success: false,
-				Error:   fmt.Sprintf("pool %s: queue full", p.config.Name),
-			}
-			return
-		}
-
-		start := time.Now()
-
-		timeout := p.config.Timeout
-		if task.TimeoutMs > 0 {
-			timeout = time.Duration(task.TimeoutMs) * time.Millisecond
-		}
-
-		taskCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-
-		// Rate limit
-		if p.limiter != nil {
-			if err := p.limiter.Wait(taskCtx); err != nil {
-				ch <- TaskResult{
-					TaskID:  task.ID,
-					Success: false,
-					Error:   fmt.Sprintf("rate limit: %v", err),
-				}
-				return
-			}
-		}
-
-		// Acquire semaphore
-		select {
-		case p.sem <- struct{}{}:
-			defer func() { <-p.sem }()
-		case <-taskCtx.Done():
-			ch <- TaskResult{
-				TaskID:  task.ID,
-				Success: false,
-				Error:   "timeout waiting for worker",
-			}
-			return
-		}
-
-		atomic.AddInt32(&p.stats.ActiveWorkers, 1)
-		defer atomic.AddInt32(&p.stats.ActiveWorkers, -1)
-
-		_ = wrappedHandler
-		result, err := p.executeWithRetry(taskCtx, &taskCopy, originalHandler)
-		duration := time.Since(start).Milliseconds()
-
-		if err != nil {
-			atomic.AddInt64(&p.stats.Failed, 1)
-			ch <- TaskResult{
-				TaskID:     task.ID,
-				Success:    false,
-				Error:      err.Error(),
-				DurationMs: duration,
-			}
-		} else {
-			atomic.AddInt64(&p.stats.Processed, 1)
-			atomic.AddInt64(&p.stats.TotalLatency, duration)
-			p.stats.recordLatency(duration)
-			ch <- TaskResult{
-				TaskID:     task.ID,
-				Success:    true,
-				Result:     result,
-				DurationMs: duration,
-			}
-		}
-	}()
-
-	select {
-	case r := <-ch:
-		return r
-	case <-ctx.Done():
-		return TaskResult{
-			TaskID:  task.ID,
-			Success: false,
-			Error:   "context cancelled",
-		}
-	}
-}
-
 func (p *Pool) dispatchLoop() {
 	defer p.wg.Done()
 	ticker := time.NewTicker(1 * time.Millisecond)
@@ -264,14 +82,12 @@ func (p *Pool) dispatchLoop() {
 }
 
 func (p *Pool) dispatch(task *Task) {
-	// Rate limit
 	if p.limiter != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = p.limiter.Wait(ctx)
 		cancel()
 	}
 
-	// Acquire semaphore
 	p.sem <- struct{}{}
 
 	p.wg.Add(1)
@@ -323,7 +139,6 @@ func (p *Pool) executeWithRetry(ctx context.Context, task *Task, handler Handler
 			if delay > p.config.Retry.MaxDelay && p.config.Retry.MaxDelay > 0 {
 				delay = p.config.Retry.MaxDelay
 			}
-			// Add jitter
 			jitter := time.Duration(rand.Int63n(int64(delay) / 2))
 			delay = delay + jitter
 

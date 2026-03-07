@@ -35,7 +35,7 @@ flowchart TD
   W1 --> Q
   EX --> Q
 
-  Q --> ST[/queue-stats]
+  Q --> ST["/queue-stats"]
   Q --> P[Queue Persistence]
   P --> F[(Snapshot File)]
 ```

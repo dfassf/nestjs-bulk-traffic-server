@@ -4,6 +4,7 @@ import { BENCH_DRIVER, BenchDriver } from '../bench-driver.interface';
 import { WorkloadType } from '../interfaces/queue-task.interface';
 import { QueueService } from '../queue.service';
 import { SimulationService } from '../simulation.service';
+import { computeMetrics, type TaskResult } from './load-test-metrics.util';
 
 type StreamTaskType = 'cpu' | 'io' | 'mixed' | 'db-write' | 'db-read';
 
@@ -137,7 +138,7 @@ export class LoadTestRunnerService {
     const run = async () => {
       emit('start', { type: testType, count, timestamp: Date.now() });
 
-      const results: { index: number; ok: boolean; ms: number }[] = [];
+      const results: TaskResult[] = [];
       const startAll = performance.now();
 
       for (let i = 0; i < count; i++) {
@@ -164,29 +165,9 @@ export class LoadTestRunnerService {
       }
 
       const totalMs = Math.round((performance.now() - startAll) * 100) / 100;
-      const fulfilled = results.filter((result) => result.ok);
-      const rejected = results.filter((result) => !result.ok);
-      const durations = fulfilled.map((result) => result.ms).sort((a, b) => a - b);
+      const metrics = computeMetrics(results, totalMs);
 
-      emit('done', {
-        type: testType,
-        total: count,
-        fulfilled: fulfilled.length,
-        rejected: rejected.length,
-        totalMs,
-        avgMs:
-          durations.length > 0
-            ? Math.round(
-                (durations.reduce((sum, value) => sum + value, 0) / durations.length) *
-                  100,
-              ) / 100
-            : 0,
-        p50: durations[Math.floor(durations.length * 0.5)] ?? 0,
-        p95: durations[Math.floor(durations.length * 0.95)] ?? 0,
-        p99: durations[Math.floor(durations.length * 0.99)] ?? 0,
-        minMs: durations[0] ?? 0,
-        maxMs: durations[durations.length - 1] ?? 0,
-      });
+      emit('done', { type: testType, ...metrics });
 
       subject.complete();
     };

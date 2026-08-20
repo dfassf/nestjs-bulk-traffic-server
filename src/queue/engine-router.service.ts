@@ -1,8 +1,9 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { QueueTask } from './interfaces/queue-task.interface';
 import { GoEngineClient, GoEngineResult } from './go-engine.client';
+import { GoEngineBackend } from './go-engine.backend';
 import { KafkaProducerBackend } from './kafka-producer.backend';
-import { WorkerBackendResult } from './interfaces/worker-backend.interface';
+import { WorkerBackend, WorkerBackendResult } from './interfaces/worker-backend.interface';
 import { readWorkerEngineEnv, WorkerEngine } from './utils/env';
 
 export { WorkerEngine };
@@ -14,6 +15,7 @@ export class EngineRouterService implements OnModuleInit {
 
   constructor(
     private readonly goEngineClient: GoEngineClient,
+    private readonly goEngineBackend: GoEngineBackend,
     private readonly kafkaProducerBackend: KafkaProducerBackend,
   ) {
     this.engine = readWorkerEngineEnv();
@@ -33,6 +35,17 @@ export class EngineRouterService implements OnModuleInit {
     return this.engine;
   }
 
+  /**
+   * 현재 엔진 모드에 해당하는 백엔드. node·both 모드는 메인 스레드·워커풀이
+   * 담당하므로 여기서는 null 을 돌려준다(호출 측이 기존 경로를 그대로 사용).
+   */
+  getBackend(): WorkerBackend | null {
+    if (this.engine === 'kafka') return this.kafkaProducerBackend;
+    if (this.engine === 'go') return this.goEngineBackend;
+    return null;
+  }
+
+  /** 엔진 모드와 무관하게 Go 엔진으로 직접 보낸다(엔진 비교 벤치마크 전용). */
   async dispatchToGo(task: QueueTask): Promise<GoEngineResult> {
     return this.goEngineClient.execute(task);
   }

@@ -1,39 +1,67 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { Kafka, Producer, logLevel } from 'kafkajs';
 import { QueueTask } from './interfaces/queue-task.interface';
 import { WorkerBackend, WorkerBackendResult } from './interfaces/worker-backend.interface';
-import { readKafkaBrokersEnv, readWorkerEngineEnv } from './utils/env';
+import { readKafkaBrokersEnv } from './utils/env';
 
 const TOPIC_HIGH = 'tasks.high';
 const TOPIC_NORMAL = 'tasks.normal';
 const TOPIC_LOW = 'tasks.low';
 
+export const KAFKA_PRODUCER_CONFIG = Symbol('KAFKA_PRODUCER_CONFIG');
+
+export interface KafkaProducerConfig {
+  /** 브로커 주소 목록. 비어 있으면 연결하지 않는다. */
+  brokers: string[];
+  clientId: string;
+  /** false 면 onModuleInit 에서 연결을 건너뛴다(엔진이 kafka 가 아닐 때). */
+  enabled: boolean;
+}
+
+/** 환경변수에서 프로듀서 설정을 만든다. 모듈 등록부(useFactory)에서 사용. */
+export function kafkaProducerConfigFromEnv(enabled: boolean): KafkaProducerConfig {
+  return {
+    brokers: readKafkaBrokersEnv(),
+    clientId: process.env.KAFKA_CLIENT_ID ?? 'bulk-traffic-producer',
+    enabled,
+  };
+}
+
 /**
  * Kafka 프로듀서 기반 워커 백엔드.
  *
- * QueueTask를 우선순위별 토픽으로 발행한다.
+ * QueueTask 를 우선순위별 토픽으로 발행한다.
  *   priority >= 5  -> tasks.high
  *   priority >= 0  -> tasks.normal
  *   priority < 0   -> tasks.low
  *
- * fire-and-forget 방식이라 execute()는 발행 접수 응답만 리턴한다.
- * 실제 처리는 별도 Go 컨슈머에서 수행하며 결과 토픽으로 회신한다.
+ * 보내고 끝내는 방식이라 execute() 는 발행 접수 응답만 돌려준다.
+ * 실제 처리는 별도 Go 컨슈머가 맡고 결과는 결과 토픽으로 회신한다.
+ *
+ * 켜짐 여부는 이 클래스가 아니라 QueueModule 이 정한다(config.enabled).
  */
 @Injectable()
 export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModuleDestroy {
   readonly name = 'kafka';
   private readonly logger = new Logger(KafkaProducerBackend.name);
+  private readonly config: KafkaProducerConfig;
 
   private kafka: Kafka;
   private producer: Producer;
   private connected = false;
 
+  constructor(
+    @Optional()
+    @Inject(KAFKA_PRODUCER_CONFIG)
+    config?: KafkaProducerConfig,
+  ) {
+    // 주입이 없으면 환경변수로 폴백한다(테스트·직접 생성 편의).
+    this.config = config ?? kafkaProducerConfigFromEnv(true);
+  }
+
   async onModuleInit(): Promise<void> {
-    // 엔진 판정은 utils/env 의 readWorkerEngineEnv 한 곳에서만 한다.
-    // 여기서 문자열을 직접 비교하면 EngineRouterService 와 해석이 갈린다.
-    const engine = readWorkerEngineEnv();
-    if (engine !== 'kafka') {
-      this.logger.log(`워커 엔진이 ${engine} 이라 Kafka 프로듀서 초기화를 건너뜁니다.`);
+    if (!this.config.enabled) {
+      this.logger.log('워커 엔진이 kafka 가 아니라 프로듀서 초기화를 건너뜁니다.');
       return;
     }
     await this.connect();
@@ -48,8 +76,10 @@ export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModu
   }
 
   private async connect(): Promise<void> {
-    const brokers = readKafkaBrokersEnv();
-    const clientId = process.env.KAFKA_CLIENT_ID ?? 'bulk-traffic-producer';
+    const { brokers, clientId } = this.config;
+    if (brokers.length === 0) {
+      throw new Error('Kafka 브로커 주소가 비어 있습니다. KAFKA_BROKERS 를 확인하세요.');
+    }
 
     this.kafka = new Kafka({
       clientId,
@@ -69,7 +99,7 @@ export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModu
 
   async execute(task: QueueTask): Promise<WorkerBackendResult> {
     if (!this.connected) {
-      throw new Error('Kafka 프로듀서가 연결되지 않았습니다. WORKER_ENGINE=kafka 여부와 브로커 상태를 확인하세요.');
+      throw new Error('Kafka 프로듀서가 연결되지 않았습니다. WORKER_ENGINE 값과 브로커 상태를 확인하세요.');
     }
 
     const topic = pickTopic(task.priority);

@@ -10,8 +10,14 @@ import { QueueStatsService } from './queue-stats.service';
 import { WorkerHealthService } from './worker-health.service';
 import { PersistenceModule } from './persistence/persistence.module';
 import { GoEngineClient } from './go-engine.client';
+import { GoEngineBackend } from './go-engine.backend';
 import { EngineRouterService } from './engine-router.service';
-import { KafkaProducerBackend } from './kafka-producer.backend';
+import {
+  KafkaProducerBackend,
+  KAFKA_PRODUCER_CONFIG,
+  kafkaProducerConfigFromEnv,
+} from './kafka-producer.backend';
+import { readWorkerEngineEnv } from './utils/env';
 import { BENCH_DRIVER } from './bench-driver.interface';
 import { SqliteBenchDriver } from './sqlite-bench.driver';
 import { PgBenchDriver } from './pg-bench.driver';
@@ -40,10 +46,16 @@ import { LoadTestCompareService } from './load-test/load-test-compare.service';
     WorkerTaskRouterService,
     SimulationService,
     GoEngineClient,
+    GoEngineBackend,
     KafkaProducerBackend,
     EngineRouterService,
     LoadTestRunnerService,
     LoadTestCompareService,
+    {
+      // 프로듀서가 스스로 켜짐 여부를 판단하지 않도록 모듈이 정해서 넘긴다.
+      provide: KAFKA_PRODUCER_CONFIG,
+      useFactory: () => kafkaProducerConfigFromEnv(readWorkerEngineEnv() === 'kafka'),
+    },
     {
       provide: BENCH_DRIVER,
       useFactory: async () => {

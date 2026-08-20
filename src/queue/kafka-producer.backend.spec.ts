@@ -1,4 +1,10 @@
-import { KafkaProducerBackend, pickTopic, KAFKA_TOPICS } from './kafka-producer.backend';
+import {
+  KafkaProducerBackend,
+  KafkaProducerConfig,
+  kafkaProducerConfigFromEnv,
+  pickTopic,
+  KAFKA_TOPICS,
+} from './kafka-producer.backend';
 import { QueueTask, WorkloadType } from './interfaces/queue-task.interface';
 
 jest.mock('kafkajs', () => {
@@ -26,6 +32,15 @@ jest.mock('kafkajs', () => {
 });
 
 const kafkaMocks = () => (jest.requireMock('kafkajs') as any).__mocks;
+
+function buildConfig(overrides: Partial<KafkaProducerConfig> = {}): KafkaProducerConfig {
+  return {
+    brokers: ['broker-a:9092', 'broker-b:9092'],
+    clientId: 'test-client',
+    enabled: true,
+    ...overrides,
+  };
+}
 
 function buildTask(overrides: Partial<QueueTask> = {}): QueueTask {
   return {
@@ -60,42 +75,50 @@ describe('pickTopic', () => {
   });
 });
 
-describe('KafkaProducerBackend', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    process.env.WORKER_ENGINE = 'kafka';
-    process.env.KAFKA_BROKERS = 'broker-a:9092,broker-b:9092';
-    process.env.KAFKA_CLIENT_ID = 'test-client';
-  });
-
+describe('kafkaProducerConfigFromEnv', () => {
   afterEach(() => {
-    delete process.env.WORKER_ENGINE;
     delete process.env.KAFKA_BROKERS;
     delete process.env.KAFKA_CLIENT_ID;
   });
 
-  it('WORKER_ENGINE != kafka 이면 프로듀서 연결을 시도하지 않는다', async () => {
-    process.env.WORKER_ENGINE = 'node';
-    const backend = new KafkaProducerBackend();
-    await backend.onModuleInit();
-    expect(kafkaMocks().kafkaCtor).not.toHaveBeenCalled();
+  it('환경변수에서 브로커 목록과 clientId 를 읽는다', () => {
+    process.env.KAFKA_BROKERS = ' a:9092 , b:9092 ';
+    process.env.KAFKA_CLIENT_ID = 'my-client';
+    expect(kafkaProducerConfigFromEnv(true)).toEqual({
+      brokers: ['a:9092', 'b:9092'],
+      clientId: 'my-client',
+      enabled: true,
+    });
   });
 
-  // EngineRouterService 는 WORKER_ENGINE 을 소문자로 변환해 비교한다.
-  // 이 백엔드가 대소문자를 그대로 비교하면 WORKER_ENGINE=Kafka 일 때
-  // 라우터는 kafka 모드인데 프로듀서만 미연결 상태가 되어 첫 요청에서 죽는다.
-  it.each(['Kafka', 'KAFKA', ' kafka '])(
-    'WORKER_ENGINE=%s 처럼 대소문자·공백이 섞여도 프로듀서를 연결한다',
-    async (value) => {
-      process.env.WORKER_ENGINE = value;
-      const backend = new KafkaProducerBackend();
-      await backend.onModuleInit();
-      expect(backend.isConnected()).toBe(true);
-    },
-  );
+  it('미설정이면 기본 브로커·clientId 를 쓴다', () => {
+    expect(kafkaProducerConfigFromEnv(false)).toEqual({
+      brokers: ['localhost:9092'],
+      clientId: 'bulk-traffic-producer',
+      enabled: false,
+    });
+  });
 
-  it('onModuleInit 시 브로커 목록과 clientId로 카프카 클라이언트 생성', async () => {
-    const backend = new KafkaProducerBackend();
+  it('enabled 는 호출 측(모듈)이 정한 값을 그대로 담는다', () => {
+    expect(kafkaProducerConfigFromEnv(true).enabled).toBe(true);
+    expect(kafkaProducerConfigFromEnv(false).enabled).toBe(false);
+  });
+});
+
+describe('KafkaProducerBackend', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('enabled=false 면 프로듀서 연결을 시도하지 않는다', async () => {
+    const backend = new KafkaProducerBackend(buildConfig({ enabled: false }));
+    await backend.onModuleInit();
+    expect(kafkaMocks().kafkaCtor).not.toHaveBeenCalled();
+    expect(backend.isConnected()).toBe(false);
+  });
+
+  it('onModuleInit 시 주입받은 브로커 목록과 clientId 로 클라이언트를 만든다', async () => {
+    const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
     expect(kafkaMocks().kafkaCtor).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -107,11 +130,16 @@ describe('KafkaProducerBackend', () => {
     expect(backend.isConnected()).toBe(true);
   });
 
+  it('브로커 목록이 비면 연결 대신 오류를 던진다', async () => {
+    const backend = new KafkaProducerBackend(buildConfig({ brokers: [] }));
+    await expect(backend.onModuleInit()).rejects.toThrow(/브로커 주소가 비어/);
+  });
+
   it('priority >= 5 인 작업은 tasks.high 로 발행된다', async () => {
     kafkaMocks().sendMock.mockResolvedValue([
       { topicName: 'tasks.high', partition: 0, baseOffset: '10', errorCode: 0 },
     ]);
-    const backend = new KafkaProducerBackend();
+    const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
 
     const task = buildTask({ priority: 7 });
@@ -123,21 +151,18 @@ describe('KafkaProducerBackend', () => {
         messages: [expect.objectContaining({ key: 'req-42' })],
       }),
     );
-    if (result.mode === 'async') {
-      expect(result.dispatch.topic).toBe('tasks.high');
-      expect(result.dispatch.partition).toBe(0);
-      expect(result.dispatch.offset).toBe('10');
-      expect(result.backend).toBe('kafka');
-    } else {
-      fail('kafka backend는 async 모드여야 함');
-    }
+    if (result.mode !== 'async') throw new Error('kafka 백엔드는 async 모드여야 함');
+    expect(result.dispatch.topic).toBe('tasks.high');
+    expect(result.dispatch.partition).toBe(0);
+    expect(result.dispatch.offset).toBe('10');
+    expect(result.backend).toBe('kafka');
   });
 
   it('priority 0~4 는 tasks.normal 로 발행된다', async () => {
     kafkaMocks().sendMock.mockResolvedValue([
       { topicName: 'tasks.normal', partition: 1, baseOffset: '3', errorCode: 0 },
     ]);
-    const backend = new KafkaProducerBackend();
+    const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
 
     await backend.execute(buildTask({ priority: 0 }));
@@ -155,7 +180,7 @@ describe('KafkaProducerBackend', () => {
     kafkaMocks().sendMock.mockResolvedValue([
       { topicName: 'tasks.low', partition: 2, baseOffset: '0', errorCode: 0 },
     ]);
-    const backend = new KafkaProducerBackend();
+    const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
 
     await backend.execute(buildTask({ priority: -1 }));
@@ -168,7 +193,7 @@ describe('KafkaProducerBackend', () => {
     kafkaMocks().sendMock.mockResolvedValue([
       { topicName: 'tasks.normal', partition: 0, baseOffset: '0', errorCode: 0 },
     ]);
-    const backend = new KafkaProducerBackend();
+    const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
 
     await backend.execute(buildTask({ priority: 3, params: { userId: 'abc' } }));
@@ -184,7 +209,7 @@ describe('KafkaProducerBackend', () => {
     kafkaMocks().sendMock.mockResolvedValue([
       { topicName: 'tasks.normal', partition: 0, baseOffset: '0', errorCode: 0 },
     ]);
-    const backend = new KafkaProducerBackend();
+    const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
 
     await backend.execute(buildTask({ requestId: 'req-xyz' }));
@@ -195,17 +220,34 @@ describe('KafkaProducerBackend', () => {
   });
 
   it('연결되지 않은 상태에서 execute 호출 시 오류', async () => {
-    process.env.WORKER_ENGINE = 'node';
-    const backend = new KafkaProducerBackend();
+    const backend = new KafkaProducerBackend(buildConfig({ enabled: false }));
     await backend.onModuleInit();
     await expect(backend.execute(buildTask())).rejects.toThrow(/연결되지 않았습니다/);
   });
 
   it('onModuleDestroy 시 프로듀서 연결 해제', async () => {
-    const backend = new KafkaProducerBackend();
+    const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
     await backend.onModuleDestroy();
     expect(kafkaMocks().disconnectMock).toHaveBeenCalled();
     expect(backend.isConnected()).toBe(false);
+  });
+
+  it('설정 주입이 없으면 환경변수로 폴백한다', async () => {
+    process.env.KAFKA_BROKERS = 'fallback:9092';
+    process.env.KAFKA_CLIENT_ID = 'fallback-client';
+    try {
+      const backend = new KafkaProducerBackend();
+      await backend.onModuleInit();
+      expect(kafkaMocks().kafkaCtor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          brokers: ['fallback:9092'],
+          clientId: 'fallback-client',
+        }),
+      );
+    } finally {
+      delete process.env.KAFKA_BROKERS;
+      delete process.env.KAFKA_CLIENT_ID;
+    }
   });
 });

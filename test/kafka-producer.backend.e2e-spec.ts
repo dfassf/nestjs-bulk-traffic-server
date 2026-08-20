@@ -26,11 +26,11 @@ describe('KafkaProducerBackend (실 브로커 e2e)', () => {
       return;
     }
 
-    process.env.WORKER_ENGINE = 'kafka';
-    process.env.KAFKA_BROKERS = brokers.join(',');
-    process.env.KAFKA_CLIENT_ID = 'e2e-producer';
-
-    backend = new KafkaProducerBackend();
+    backend = new KafkaProducerBackend({
+      brokers,
+      clientId: 'e2e-producer',
+      enabled: true,
+    });
     await backend.onModuleInit();
 
     kafka = new Kafka({
@@ -55,9 +55,6 @@ describe('KafkaProducerBackend (실 브로커 e2e)', () => {
   afterAll(async () => {
     if (backend) await backend.onModuleDestroy();
     if (admin) await admin.disconnect();
-    delete process.env.WORKER_ENGINE;
-    delete process.env.KAFKA_BROKERS;
-    delete process.env.KAFKA_CLIENT_ID;
   });
 
   function skipIfUnavailable(): boolean {

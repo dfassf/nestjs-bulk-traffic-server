@@ -1,4 +1,61 @@
 services:
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: bulk-kafka
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_HOST_PORT:-9092}:9092"
+    environment:
+      # KRaft 모드: Zookeeper 없이 단독 실행. 클러스터 ID는 KRaft에서 필수
+      - CLUSTER_ID=bulk-traffic-local-cluster
+      - KAFKA_NODE_ID=0
+      - KAFKA_PROCESS_ROLES=controller,broker
+      - KAFKA_LISTENERS=PLAINTEXT://:9094,CONTROLLER://:9093,EXTERNAL://:9092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9094,EXTERNAL://localhost:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      # 개발 편의: 존재하지 않는 토픽 자동 생성
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      # 단일 노드라 replication 팩터 1
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      # confluent 이미지 기본 저장 경로
+      - KAFKA_LOG_DIRS=/var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9094 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1"
+
+  # 카프카 상태 UI (선택). 학습·디버깅용
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: bulk-kafka-ui
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_UI_HOST_PORT:-8090}:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9094
+    networks:
+      - internal
+    depends_on:
+      kafka:
+        condition: service_healthy
+
   go-engine:
     build:
       context: ./go-engine
@@ -111,4 +168,6 @@ volumes:
   app-data:
     driver: local
   pg-data:
+    driver: local
+  kafka-data:
     driver: local

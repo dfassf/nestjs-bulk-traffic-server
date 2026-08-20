@@ -11,6 +11,7 @@ import { WorkerHealthService } from './worker-health.service';
 import { PersistenceModule } from './persistence/persistence.module';
 import { GoEngineClient } from './go-engine.client';
 import { EngineRouterService } from './engine-router.service';
+import { KafkaProducerBackend } from './kafka-producer.backend';
 import { BENCH_DRIVER } from './bench-driver.interface';
 import { SqliteBenchDriver } from './sqlite-bench.driver';
 import { PgBenchDriver } from './pg-bench.driver';
@@ -39,6 +40,7 @@ import { LoadTestCompareService } from './load-test/load-test-compare.service';
     WorkerTaskRouterService,
     SimulationService,
     GoEngineClient,
+    KafkaProducerBackend,
     EngineRouterService,
     LoadTestRunnerService,
     LoadTestCompareService,

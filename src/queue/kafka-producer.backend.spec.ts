@@ -81,6 +81,19 @@ describe('KafkaProducerBackend', () => {
     expect(kafkaMocks().kafkaCtor).not.toHaveBeenCalled();
   });
 
+  // EngineRouterService 는 WORKER_ENGINE 을 소문자로 변환해 비교한다.
+  // 이 백엔드가 대소문자를 그대로 비교하면 WORKER_ENGINE=Kafka 일 때
+  // 라우터는 kafka 모드인데 프로듀서만 미연결 상태가 되어 첫 요청에서 죽는다.
+  it.each(['Kafka', 'KAFKA', ' kafka '])(
+    'WORKER_ENGINE=%s 처럼 대소문자·공백이 섞여도 프로듀서를 연결한다',
+    async (value) => {
+      process.env.WORKER_ENGINE = value;
+      const backend = new KafkaProducerBackend();
+      await backend.onModuleInit();
+      expect(backend.isConnected()).toBe(true);
+    },
+  );
+
   it('onModuleInit 시 브로커 목록과 clientId로 카프카 클라이언트 생성', async () => {
     const backend = new KafkaProducerBackend();
     await backend.onModuleInit();

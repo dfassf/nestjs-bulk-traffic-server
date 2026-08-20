@@ -3,8 +3,9 @@ import { QueueTask } from './interfaces/queue-task.interface';
 import { GoEngineClient, GoEngineResult } from './go-engine.client';
 import { KafkaProducerBackend } from './kafka-producer.backend';
 import { WorkerBackendResult } from './interfaces/worker-backend.interface';
+import { readWorkerEngineEnv, WorkerEngine } from './utils/env';
 
-export type WorkerEngine = 'node' | 'go' | 'both' | 'kafka';
+export { WorkerEngine };
 
 @Injectable()
 export class EngineRouterService implements OnModuleInit {
@@ -15,12 +16,7 @@ export class EngineRouterService implements OnModuleInit {
     private readonly goEngineClient: GoEngineClient,
     private readonly kafkaProducerBackend: KafkaProducerBackend,
   ) {
-    const env = (process.env.WORKER_ENGINE || 'node').toLowerCase();
-    if (env === 'go' || env === 'both' || env === 'kafka') {
-      this.engine = env as WorkerEngine;
-    } else {
-      this.engine = 'node';
-    }
+    this.engine = readWorkerEngineEnv();
   }
 
   onModuleInit() {

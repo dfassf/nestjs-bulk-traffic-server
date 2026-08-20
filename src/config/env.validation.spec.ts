@@ -69,4 +69,57 @@ describe('validateEnv', () => {
       }),
     ).toThrow('QUEUE_SNAPSHOT_PATH는 문자열이어야 합니다.');
   });
+
+  it.each(['node', 'go', 'both', 'kafka'])(
+    'WORKER_ENGINE=%s 는 통과해야 한다',
+    (engine) => {
+      expect(() =>
+        validateEnv({
+          WORKER_ENGINE: engine,
+          KAFKA_BROKERS: 'localhost:9092',
+        }),
+      ).not.toThrow();
+    },
+  );
+
+  it('WORKER_ENGINE 대소문자·공백이 섞여도 통과해야 한다', () => {
+    expect(() =>
+      validateEnv({
+        WORKER_ENGINE: ' Kafka ',
+        KAFKA_BROKERS: 'localhost:9092',
+      }),
+    ).not.toThrow();
+  });
+
+  it('WORKER_ENGINE 오타는 조용히 넘기지 않고 예외를 던져야 한다', () => {
+    expect(() =>
+      validateEnv({
+        WORKER_ENGINE: 'kfka',
+      }),
+    ).toThrow('WORKER_ENGINE은 node, go, both, kafka 중 하나여야 합니다.');
+  });
+
+  it('WORKER_ENGINE 미설정은 기본값(node)이므로 통과해야 한다', () => {
+    expect(() => validateEnv({})).not.toThrow();
+  });
+
+  it('WORKER_ENGINE=kafka 인데 KAFKA_BROKERS가 비면 예외를 던져야 한다', () => {
+    expect(() =>
+      validateEnv({
+        WORKER_ENGINE: 'kafka',
+        KAFKA_BROKERS: '  ,  ',
+      }),
+    ).toThrow(
+      'WORKER_ENGINE=kafka 이면 KAFKA_BROKERS에 브로커 주소가 최소 하나 있어야 합니다.',
+    );
+  });
+
+  it('WORKER_ENGINE이 kafka가 아니면 KAFKA_BROKERS가 비어도 통과해야 한다', () => {
+    expect(() =>
+      validateEnv({
+        WORKER_ENGINE: 'node',
+        KAFKA_BROKERS: '',
+      }),
+    ).not.toThrow();
+  });
 });

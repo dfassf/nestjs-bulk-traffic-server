@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { Kafka, Producer, logLevel } from 'kafkajs';
 import { QueueTask } from './interfaces/queue-task.interface';
 import { WorkerBackend, WorkerBackendResult } from './interfaces/worker-backend.interface';
+import { readKafkaBrokersEnv, readWorkerEngineEnv } from './utils/env';
 
 const TOPIC_HIGH = 'tasks.high';
 const TOPIC_NORMAL = 'tasks.normal';
@@ -28,8 +29,11 @@ export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModu
   private connected = false;
 
   async onModuleInit(): Promise<void> {
-    if (process.env.WORKER_ENGINE !== 'kafka') {
-      this.logger.log('WORKER_ENGINE != kafka. Kafka 프로듀서 초기화 스킵');
+    // 엔진 판정은 utils/env 의 readWorkerEngineEnv 한 곳에서만 한다.
+    // 여기서 문자열을 직접 비교하면 EngineRouterService 와 해석이 갈린다.
+    const engine = readWorkerEngineEnv();
+    if (engine !== 'kafka') {
+      this.logger.log(`워커 엔진이 ${engine} 이라 Kafka 프로듀서 초기화를 건너뜁니다.`);
       return;
     }
     await this.connect();
@@ -44,10 +48,7 @@ export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModu
   }
 
   private async connect(): Promise<void> {
-    const brokers = (process.env.KAFKA_BROKERS ?? 'localhost:9092')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const brokers = readKafkaBrokersEnv();
     const clientId = process.env.KAFKA_CLIENT_ID ?? 'bulk-traffic-producer';
 
     this.kafka = new Kafka({

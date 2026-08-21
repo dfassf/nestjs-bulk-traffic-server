@@ -2,7 +2,10 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import * as path from 'path';
-import { QueueTask } from './interfaces/queue-task.interface';
+import { QueueTask, WorkloadType } from './interfaces/queue-task.interface';
+
+/** 작업에 타임아웃이 지정되지 않았을 때 쓰는 상한. 실행 시간 보호용이라 기본값이 정당하다. */
+const DEFAULT_TASK_TIMEOUT_MS = 30000;
 
 interface TaskResponse {
   taskId: string;
@@ -103,20 +106,29 @@ export class GoEngineClient implements OnModuleInit, OnModuleDestroy {
       throw new Error('Go 엔진 클라이언트가 초기화되지 않았습니다.');
     }
 
-    const workloadType = task.workloadType || 'cpu';
-    const payload = JSON.stringify(task.params || {});
+    // 원래 작업 종류를 그대로 넘긴다. 여기서 'cpu' 로 덮어쓰면 Go 엔진 로그에도
+    // cpu 로만 남아, 종류가 빠진 작업이 얼마나 되는지 추적할 수 없다.
+    // 미지정 처리(cpu 풀 배정)는 Go 라우터의 default 분기가 이미 맡는다.
+    if (!task.workloadType) {
+      this.logger.warn(
+        `작업 ${task.id} 에 workloadType 이 없습니다. Go 엔진의 기본 풀로 배정됩니다.`,
+      );
+    }
+    const workloadType = task.workloadType ?? WorkloadType.UNKNOWN;
+    const payload = JSON.stringify(task.params ?? {});
+    const timeoutMs = task.timeout ?? DEFAULT_TASK_TIMEOUT_MS;
 
     const request = {
       taskId: String(task.id),
       workloadType,
       priority: task.priority,
       payload: Buffer.from(payload),
-      timeoutMs: task.timeout || 30000,
+      timeoutMs,
       metadata: {},
     };
 
     return new Promise<GoEngineResult>((resolve, reject) => {
-      const deadline = new Date(Date.now() + (task.timeout || 30000));
+      const deadline = new Date(Date.now() + timeoutMs);
 
       this.client.Execute(
         request,

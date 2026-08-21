@@ -106,14 +106,14 @@ async function startCompare() {
 
       if (msg.event === 'done') {
         const n = msg.node, g = msg.go;
-        document.getElementById('cmpNodeAvg').textContent = n.avgMs + 'ms';
-        document.getElementById('cmpNodeP50').textContent = n.p50 + 'ms';
-        document.getElementById('cmpNodeP95').textContent = n.p95 + 'ms';
-        document.getElementById('cmpNodeP99').textContent = n.p99 + 'ms';
-        document.getElementById('cmpGoAvg').textContent = g.avgMs + 'ms';
-        document.getElementById('cmpGoP50').textContent = g.p50 + 'ms';
-        document.getElementById('cmpGoP95').textContent = g.p95 + 'ms';
-        document.getElementById('cmpGoP99').textContent = g.p99 + 'ms';
+        document.getElementById('cmpNodeAvg').textContent = formatMs(n.avgMs);
+        document.getElementById('cmpNodeP50').textContent = formatMs(n.p50);
+        document.getElementById('cmpNodeP95').textContent = formatMs(n.p95);
+        document.getElementById('cmpNodeP99').textContent = formatMs(n.p99);
+        document.getElementById('cmpGoAvg').textContent = formatMs(g.avgMs);
+        document.getElementById('cmpGoP50').textContent = formatMs(g.p50);
+        document.getElementById('cmpGoP95').textContent = formatMs(g.p95);
+        document.getElementById('cmpGoP99').textContent = formatMs(g.p99);
 
         cmpBarChart.data.datasets[0].data = [n.avgMs, n.p50, n.p95, n.p99, n.min, n.max];
         cmpBarChart.data.datasets[1].data = [g.avgMs, g.p50, g.p95, g.p99, g.min, g.max];
@@ -132,14 +132,14 @@ async function startCompare() {
         const winner = msg.nodeWins > msg.goWins ? 'Node' : msg.goWins > msg.nodeWins ? 'Go' : '무승부';
         const wc = winner === 'Node' ? 'badge-node' : winner === 'Go' ? 'badge-go' : '';
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${msg.task}</td><td>${msg.total}</td><td>${msg.nodeWins}</td><td>${msg.goWins}</td><td>${n.avgMs}ms</td><td>${g.avgMs}ms</td><td><span class="badge ${wc}">${winner}</span></td>`;
+        row.innerHTML = `<td>${msg.task}</td><td>${msg.total}</td><td>${msg.nodeWins}</td><td>${msg.goWins}</td><td>${formatMs(n.avgMs)}</td><td>${formatMs(g.avgMs)}</td><td><span class="badge ${wc}">${winner}</span></td>`;
         const hb = document.getElementById('cmpHistoryBody');
         hb.insertBefore(row, hb.firstChild);
 
         logTo('cmpLogArea', '', '');
         logTo('cmpLogArea', `완료 (${msg.totalMs}ms) — Node ${msg.nodeWins} : ${msg.goWins} Go (오류 ${msg.errors}건)`, 'log-info');
-        logTo('cmpLogArea', `  Node: 평균=${n.avgMs}ms p50=${n.p50}ms p95=${n.p95}ms p99=${n.p99}ms`, 'log-warn');
-        logTo('cmpLogArea', `  Go:   평균=${g.avgMs}ms p50=${g.p50}ms p95=${g.p95}ms p99=${g.p99}ms`, 'log-warn');
+        logTo('cmpLogArea', `  Node: 평균=${formatMs(n.avgMs)} p50=${formatMs(n.p50)} p95=${formatMs(n.p95)} p99=${formatMs(n.p99)}`, 'log-warn');
+        logTo('cmpLogArea', `  Go:   평균=${formatMs(g.avgMs)} p50=${formatMs(g.p50)} p95=${formatMs(g.p95)} p99=${formatMs(g.p99)}`, 'log-warn');
       }
     });
   } catch (err) { logTo('cmpLogArea', `오류: ${err.message}`, 'log-fail'); }

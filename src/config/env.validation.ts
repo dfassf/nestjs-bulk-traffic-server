@@ -78,29 +78,33 @@ export function validateEnv(config: EnvMap): EnvMap {
     throw new Error('ALLOWED_ORIGINS는 콤마(,)로 구분된 문자열이어야 합니다.');
   }
 
-  // 오타(WORKER_ENGINE=kfka)를 조용히 node 로 떨어뜨리지 않고 부팅에서 막는다.
+  // 미설정(undefined)·빈 값('')·오타를 각각 다르게 다룬다.
+  //   미설정 -> 기본값(node) 사용, 통과
+  //   빈 값  -> 미설정과 같게 취급, 통과
+  //   오타   -> 조용히 node 로 떨어뜨리지 않고 부팅에서 막는다
   const workerEngine = config.WORKER_ENGINE;
-  if (
-    workerEngine !== undefined &&
-    workerEngine !== '' &&
-    parseWorkerEngine(String(workerEngine)) === null
-  ) {
+  const workerEngineSet =
+    workerEngine !== undefined && workerEngine !== null && String(workerEngine).trim() !== '';
+
+  if (workerEngineSet && parseWorkerEngine(String(workerEngine)) === null) {
     throw new Error(
       `WORKER_ENGINE은 ${WORKER_ENGINES.join(', ')} 중 하나여야 합니다.`,
     );
   }
 
-  // 엔진이 kafka 인데 브로커 주소가 비어 있으면 첫 요청에서야 실패한다. 부팅에서 막는다.
-  if (parseWorkerEngine(String(workerEngine ?? '')) === 'kafka') {
+  // 엔진이 kafka 인데 브로커 주소가 없으면 첫 발행에서야 실패한다. 부팅에서 막는다.
+  if (workerEngineSet && parseWorkerEngine(String(workerEngine)) === 'kafka') {
     const brokers = config.KAFKA_BROKERS;
     if (brokers !== undefined && typeof brokers !== 'string') {
       throw new Error('KAFKA_BROKERS는 콤마(,)로 구분된 문자열이어야 합니다.');
     }
-    const parsedBrokers = String(brokers ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (brokers !== undefined && parsedBrokers.length === 0) {
+    // 미설정도 빈 값과 똑같이 막는다. kafka 모드에서 브로커 주소는 접속 대상이라
+    // 기본값으로 대신하면 의도하지 않은 브로커에 붙을 수 있다.
+    const parsedBrokers =
+      typeof brokers === 'string'
+        ? brokers.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
+    if (parsedBrokers.length === 0) {
       throw new Error(
         'WORKER_ENGINE=kafka 이면 KAFKA_BROKERS에 브로커 주소가 최소 하나 있어야 합니다.',
       );

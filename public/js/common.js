@@ -11,6 +11,19 @@ function logTo(areaId, msg, cls = '') {
   area.scrollTop = area.scrollHeight;
 }
 
+// 지연 지표는 성공 표본이 없으면 null 로 온다. 0ms 로 보이면 가장 좋은 성능처럼
+// 읽히기 때문에 서버가 0 으로 메우지 않고, 화면에서 측정 불가로 표시한다.
+function formatMs(value) {
+  return value === null || value === undefined ? '측정 불가' : `${value}ms`;
+}
+
+// 통계 카드처럼 숫자와 단위를 나눠 그리는 자리용.
+function formatStatValue(value, unit) {
+  return value === null || value === undefined
+    ? '<span class="unit">측정 불가</span>'
+    : `${value}<span class="unit">${unit}</span>`;
+}
+
 function updateProgressBar(fillId, labelId, pctId, current, total) {
   const pct = Math.round((current / total) * 100);
   document.getElementById(fillId).style.width = pct + '%';

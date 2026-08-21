@@ -106,8 +106,8 @@ async function startTest() {
           logTo('logArea', `#${msg.index} 성공 ${msg.ms}ms  [${msg.fulfilled}성공/${msg.rejected}실패]`, 'log-ok');
       }
       if (msg.event === 'done') {
-        document.getElementById('statAvg').innerHTML = `${msg.avgMs}<span class="unit">ms</span>`;
-        document.getElementById('statP95').innerHTML = `${msg.p95}<span class="unit">ms</span>`;
+        document.getElementById('statAvg').innerHTML = formatStatValue(msg.avgMs, 'ms');
+        document.getElementById('statP95').innerHTML = formatStatValue(msg.p95, 'ms');
         const rps = msg.totalMs > 0 ? Math.round((msg.fulfilled / msg.totalMs) * 1000 * 10) / 10 : 0;
         document.getElementById('statRps').innerHTML = `${rps}<span class="unit">req/s</span>`;
         const sr = msg.total > 0 ? Math.round((msg.fulfilled / msg.total) * 1000) / 10 : 0;
@@ -116,12 +116,12 @@ async function startTest() {
         document.getElementById('historyEmpty').style.display = 'none';
         const bc = msg.type.startsWith('db') ? 'badge-db' : msg.type === 'mixed' ? 'badge-mixed' : msg.type === 'io' ? 'badge-io' : 'badge-cpu';
         const row = document.createElement('tr');
-        row.innerHTML = `<td><span class="badge ${bc}">${msg.type.toUpperCase()}</span></td><td>${msg.total}</td><td>${msg.avgMs}ms</td><td>${msg.p50}ms</td><td>${msg.p95}ms</td><td>${msg.p99}ms</td><td>${sr}%</td><td>${msg.totalMs}ms</td><td>${rps}</td>`;
+        row.innerHTML = `<td><span class="badge ${bc}">${msg.type.toUpperCase()}</span></td><td>${msg.total}</td><td>${formatMs(msg.avgMs)}</td><td>${formatMs(msg.p50)}</td><td>${formatMs(msg.p95)}</td><td>${formatMs(msg.p99)}</td><td>${sr}%</td><td>${msg.totalMs}ms</td><td>${rps}</td>`;
         const hb = document.getElementById('historyBody');
         hb.insertBefore(row, hb.firstChild);
         logTo('logArea', '', '');
         logTo('logArea', `완료: ${msg.fulfilled}/${msg.total} 성공 (${msg.totalMs}ms)`, 'log-info');
-        logTo('logArea', `  평균=${msg.avgMs}ms  p50=${msg.p50}ms  p95=${msg.p95}ms  p99=${msg.p99}ms`, 'log-warn');
+        logTo('logArea', `  평균=${formatMs(msg.avgMs)}  p50=${formatMs(msg.p50)}  p95=${formatMs(msg.p95)}  p99=${formatMs(msg.p99)}`, 'log-warn');
       }
     });
   } catch (err) { logTo('logArea', `오류: ${err.message}`, 'log-fail'); }

@@ -4,6 +4,7 @@ import { EngineRouterService } from '../engine-router.service';
 import { WorkloadType } from '../interfaces/queue-task.interface';
 import { QueueService } from '../queue.service';
 import { SimulationService } from '../simulation.service';
+import { summarizeLatencies } from './load-test-metrics.util';
 
 @Injectable()
 export class LoadTestCompareService {
@@ -179,9 +180,6 @@ export class LoadTestCompareService {
 
       const totalMs = Math.round((performance.now() - startAll) * 100) / 100;
       const valid = results.filter((result) => result.winner !== 'error');
-      const nodeDurations = valid.map((result) => result.nodeMs).sort((a, b) => a - b);
-      const goDurations = valid.map((result) => result.goMs).sort((a, b) => a - b);
-      const pctl = (arr: number[], p: number) => arr[Math.floor(arr.length * p)] ?? 0;
 
       const taskLabel =
         testType === 'io' ? `asyncIO(delay=${delayMs}ms)` : `findPrimes(max=${max})`;
@@ -194,36 +192,10 @@ export class LoadTestCompareService {
         nodeWins: results.filter((result) => result.winner === 'node').length,
         goWins: results.filter((result) => result.winner === 'go').length,
         errors: results.filter((result) => result.winner === 'error').length,
-        node: {
-          avgMs:
-            valid.length > 0
-              ? Math.round(
-                  (valid.reduce((sum, result) => sum + result.nodeMs, 0) /
-                    valid.length) *
-                    100,
-                ) / 100
-              : 0,
-          p50: pctl(nodeDurations, 0.5),
-          p95: pctl(nodeDurations, 0.95),
-          p99: pctl(nodeDurations, 0.99),
-          min: nodeDurations[0] ?? 0,
-          max: nodeDurations[nodeDurations.length - 1] ?? 0,
-        },
-        go: {
-          avgMs:
-            valid.length > 0
-              ? Math.round(
-                  (valid.reduce((sum, result) => sum + result.goMs, 0) /
-                    valid.length) *
-                    100,
-                ) / 100
-              : 0,
-          p50: pctl(goDurations, 0.5),
-          p95: pctl(goDurations, 0.95),
-          p99: pctl(goDurations, 0.99),
-          min: goDurations[0] ?? 0,
-          max: goDurations[goDurations.length - 1] ?? 0,
-        },
+        // 전량 실패하면 각 지표가 null 로 나간다. 0 으로 메우면 두 엔진 다
+        // 지연 0ms 로 보여 비교가 성립한 것처럼 읽힌다.
+        node: summarizeLatencies(valid.map((result) => result.nodeMs)),
+        go: summarizeLatencies(valid.map((result) => result.goMs)),
       });
 
       subject.complete();

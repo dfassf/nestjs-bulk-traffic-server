@@ -6,6 +6,32 @@ export function readPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/**
+ * 반드시 있어야 하는 환경변수를 읽는다. 없거나 비어 있으면 예외.
+ *
+ * 접속 정보(호스트·계정·비밀번호 등)에 기본값을 두면, 값이 빠졌을 때
+ * 엉뚱한 대상에 붙고도 정상 동작한 것처럼 보인다. 그 조용한 오작동을 막는다.
+ */
+export function requireEnv(name: string): string {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') {
+    throw new Error(
+      `${name} 환경변수가 필요합니다. 기본값으로 대신하면 의도하지 않은 대상에 접속할 수 있어 대신하지 않습니다.`,
+    );
+  }
+  return raw.trim();
+}
+
+/** 반드시 있어야 하는 양의 정수 환경변수. 없거나 형식이 틀리면 예외. */
+export function requirePositiveIntEnv(name: string): number {
+  const raw = requireEnv(name);
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name}는 0보다 큰 정수여야 합니다. 현재 값: ${raw}`);
+  }
+  return parsed;
+}
+
 /** 워커 엔진 선택값. 각 값의 의미는 README 의 워커 엔진 절 참고. */
 export const WORKER_ENGINES = ['node', 'go', 'both', 'kafka'] as const;
 

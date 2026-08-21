@@ -1,17 +1,21 @@
 import { BenchDriver, BenchResult } from './bench-driver.interface';
 import { Pool } from 'pg';
+import { readPositiveIntEnv, requireEnv, requirePositiveIntEnv } from './utils/env';
 
 export class PgBenchDriver implements BenchDriver {
   private pool: Pool;
 
   constructor() {
+    // 접속 대상은 기본값을 두지 않는다. 값이 빠졌는데 localhost 로 붙어버리면
+    // 원격 DB 를 측정한다고 믿으면서 실제로는 로컬을 재는 상황이 조용히 생긴다.
+    // 풀 크기는 성능 조절값이라 틀려도 대상이 바뀌지 않으므로 기본값을 둔다.
     this.pool = new Pool({
-      host: process.env.BENCH_PG_HOST || 'localhost',
-      port: parseInt(process.env.BENCH_PG_PORT || '5432'),
-      database: process.env.BENCH_PG_DATABASE || 'bench',
-      user: process.env.BENCH_PG_USER || 'bench',
-      password: process.env.BENCH_PG_PASSWORD || 'bench',
-      max: parseInt(process.env.BENCH_PG_POOL_SIZE || '10'),
+      host: requireEnv('BENCH_PG_HOST'),
+      port: requirePositiveIntEnv('BENCH_PG_PORT'),
+      database: requireEnv('BENCH_PG_DATABASE'),
+      user: requireEnv('BENCH_PG_USER'),
+      password: requireEnv('BENCH_PG_PASSWORD'),
+      max: readPositiveIntEnv('BENCH_PG_POOL_SIZE', 10),
     });
   }
 

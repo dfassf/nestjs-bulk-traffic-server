@@ -4,6 +4,8 @@ import {
   readKafkaBrokersEnv,
   readPositiveIntEnv,
   readWorkerEngineEnv,
+  requireEnv,
+  requirePositiveIntEnv,
 } from './env';
 
 describe('readPositiveIntEnv', () => {
@@ -26,6 +28,53 @@ describe('readPositiveIntEnv', () => {
 
     process.env.TEST_INT_VALUE = 'abc';
     expect(readPositiveIntEnv('TEST_INT_VALUE', 7)).toBe(7);
+  });
+});
+
+describe('requireEnv', () => {
+  afterEach(() => {
+    delete process.env.TEST_REQUIRED;
+  });
+
+  it('값이 있으면 앞뒤 공백을 지우고 돌려준다', () => {
+    process.env.TEST_REQUIRED = '  db.example.com  ';
+    expect(requireEnv('TEST_REQUIRED')).toBe('db.example.com');
+  });
+
+  // 접속 정보에 기본값을 두면 엉뚱한 대상에 붙고도 성공한 것처럼 보인다.
+  it('미설정이면 기본값을 만들지 않고 예외를 던진다', () => {
+    expect(() => requireEnv('TEST_REQUIRED')).toThrow(/TEST_REQUIRED 환경변수가 필요합니다/);
+  });
+
+  it('빈 문자열·공백만 있어도 예외를 던진다', () => {
+    process.env.TEST_REQUIRED = '';
+    expect(() => requireEnv('TEST_REQUIRED')).toThrow();
+
+    process.env.TEST_REQUIRED = '   ';
+    expect(() => requireEnv('TEST_REQUIRED')).toThrow();
+  });
+});
+
+describe('requirePositiveIntEnv', () => {
+  afterEach(() => {
+    delete process.env.TEST_REQUIRED_INT;
+  });
+
+  it('양의 정수를 돌려준다', () => {
+    process.env.TEST_REQUIRED_INT = '5432';
+    expect(requirePositiveIntEnv('TEST_REQUIRED_INT')).toBe(5432);
+  });
+
+  it('미설정이면 예외를 던진다', () => {
+    expect(() => requirePositiveIntEnv('TEST_REQUIRED_INT')).toThrow(/필요합니다/);
+  });
+
+  it('0 이하거나 숫자가 아니면 기본값으로 대신하지 않고 예외를 던진다', () => {
+    process.env.TEST_REQUIRED_INT = '0';
+    expect(() => requirePositiveIntEnv('TEST_REQUIRED_INT')).toThrow(/0보다 큰 정수/);
+
+    process.env.TEST_REQUIRED_INT = 'abc';
+    expect(() => requirePositiveIntEnv('TEST_REQUIRED_INT')).toThrow(/0보다 큰 정수/);
   });
 });
 

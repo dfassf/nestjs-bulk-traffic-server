@@ -114,6 +114,22 @@ describe('validateEnv', () => {
     );
   });
 
+  // 미설정이 빈 값보다 느슨하면, 변수를 아예 빼먹었을 때 기본 브로커로 조용히 붙는다.
+  it('WORKER_ENGINE=kafka 인데 KAFKA_BROKERS가 아예 없으면 예외를 던져야 한다', () => {
+    expect(() =>
+      validateEnv({
+        WORKER_ENGINE: 'kafka',
+      }),
+    ).toThrow(
+      'WORKER_ENGINE=kafka 이면 KAFKA_BROKERS에 브로커 주소가 최소 하나 있어야 합니다.',
+    );
+  });
+
+  it('WORKER_ENGINE 이 빈 문자열이면 미설정과 같게 통과해야 한다', () => {
+    expect(() => validateEnv({ WORKER_ENGINE: '' })).not.toThrow();
+    expect(() => validateEnv({ WORKER_ENGINE: '   ' })).not.toThrow();
+  });
+
   it('WORKER_ENGINE이 kafka가 아니면 KAFKA_BROKERS가 비어도 통과해야 한다', () => {
     expect(() =>
       validateEnv({

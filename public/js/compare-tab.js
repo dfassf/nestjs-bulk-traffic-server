@@ -100,7 +100,7 @@ async function startCompare() {
         const winCls = msg.winner === 'node' ? 'log-ok' : msg.winner === 'go' ? 'log-warn' : 'log-fail';
         const winIcon = msg.winner === 'node' ? 'NODE' : msg.winner === 'go' ? 'GO  ' : 'ERR ';
         if (msg.index % Math.max(1, Math.floor(msg.total / 30)) === 0 || msg.winner === 'error') {
-          logTo('cmpLogArea', `#${msg.index} [${winIcon}]  Node=${msg.nodeMs}ms  Go=${msg.goMs}ms  (${msg.nodeWins}:${msg.goWins})`, winCls);
+          logTo('cmpLogArea', `#${msg.index} [${winIcon}]  Node=${formatMs(msg.nodeMs)}  Go=${formatMs(msg.goMs)}  (${msg.nodeWins}:${msg.goWins})`, winCls);
         }
       }
 

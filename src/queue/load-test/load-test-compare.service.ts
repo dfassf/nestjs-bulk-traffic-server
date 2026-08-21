@@ -6,6 +6,21 @@ import { QueueService } from '../queue.service';
 import { SimulationService } from '../simulation.service';
 import { summarizeLatencies } from './load-test-metrics.util';
 
+/**
+ * 엔진 비교 한 라운드의 결과.
+ * 실패 라운드는 지연을 측정하지 못했으므로 null 이다(0 이 아니다).
+ */
+export interface CompareRound {
+  winner: 'node' | 'go' | 'error';
+  nodeMs: number | null;
+  goMs: number | null;
+}
+
+/** 라운드 목록에서 한쪽 엔진의 실측 지연만 추린다(측정 못 한 라운드는 제외). */
+function pickLatencies(rounds: CompareRound[], key: 'nodeMs' | 'goMs'): number[] {
+  return rounds.map((r) => r[key]).filter((ms): ms is number => ms !== null);
+}
+
 @Injectable()
 export class LoadTestCompareService {
   constructor(
@@ -21,7 +36,7 @@ export class LoadTestCompareService {
 
     const count = Math.min(body.count || 10, 100);
     const max = body.max || 500000;
-    const results: { winner: string; nodeMs: number; goMs: number }[] = [];
+    const results: CompareRound[] = [];
 
     for (let i = 0; i < count; i++) {
       try {
@@ -45,21 +60,15 @@ export class LoadTestCompareService {
           goMs,
         });
       } catch {
-        results.push({ winner: 'error', nodeMs: 0, goMs: 0 });
+        // 실패 라운드의 지연은 0 이 아니라 측정 불가다. 0 으로 적으면
+        // 평균과 차트에서 "가장 빠른 구간"으로 읽힌다.
+        results.push({ winner: 'error', nodeMs: null, goMs: null });
       }
     }
 
-    const validResults = results.filter((result) => result.winner !== 'error');
-    const avgNodeMs =
-      validResults.length > 0
-        ? validResults.reduce((sum, result) => sum + result.nodeMs, 0) /
-          validResults.length
-        : 0;
-    const avgGoMs =
-      validResults.length > 0
-        ? validResults.reduce((sum, result) => sum + result.goMs, 0) /
-          validResults.length
-        : 0;
+    const valid = results.filter((result) => result.winner !== 'error');
+    const node = summarizeLatencies(pickLatencies(valid, 'nodeMs'));
+    const go = summarizeLatencies(pickLatencies(valid, 'goMs'));
 
     return {
       total: count,
@@ -67,9 +76,13 @@ export class LoadTestCompareService {
       nodeWins: results.filter((result) => result.winner === 'node').length,
       goWins: results.filter((result) => result.winner === 'go').length,
       errors: results.filter((result) => result.winner === 'error').length,
-      avgNodeMs: Math.round(avgNodeMs * 100) / 100,
-      avgGoMs: Math.round(avgGoMs * 100) / 100,
-      speedup: avgGoMs > 0 ? Math.round((avgNodeMs / avgGoMs) * 100) / 100 : null,
+      avgNodeMs: node.avgMs,
+      avgGoMs: go.avgMs,
+      // 표본이 없으면 비교 자체가 성립하지 않으므로 배속도 null.
+      speedup:
+        node.avgMs !== null && go.avgMs !== null && go.avgMs > 0
+          ? Math.round((node.avgMs / go.avgMs) * 100) / 100
+          : null,
       detail: results,
     };
   }
@@ -107,13 +120,14 @@ export class LoadTestCompareService {
         return;
       }
 
-      const results: { index: number; nodeMs: number; goMs: number; winner: string }[] = [];
+      const results: (CompareRound & { index: number })[] = [];
       const startAll = performance.now();
 
       for (let i = 0; i < count; i++) {
-        let nodeMs = 0;
-        let goMs = 0;
-        let winner = 'error';
+        // 측정 전 상태는 0 이 아니라 '아직 없음'이다. 실패하면 그대로 null 로 남는다.
+        let nodeMs: number | null = null;
+        let goMs: number | null = null;
+        let winner: CompareRound['winner'] = 'error';
 
         try {
           if (testType === 'io') {
@@ -142,8 +156,16 @@ export class LoadTestCompareService {
             goMs = Math.round((performance.now() - goStart) * 100) / 100;
           }
 
-          winner = nodeMs <= goMs ? 'node' : 'go';
+          winner =
+            nodeMs !== null && goMs !== null
+              ? nodeMs <= goMs
+                ? 'node'
+                : 'go'
+              : 'error';
         } catch {
+          // 어느 쪽이 얼마나 걸렸는지 모르는 상태다. 측정값을 지워 0 이 남지 않게 한다.
+          nodeMs = null;
+          goMs = null;
           winner = 'error';
         }
 
@@ -159,22 +181,9 @@ export class LoadTestCompareService {
           nodeWins: results.filter((result) => result.winner === 'node').length,
           goWins: results.filter((result) => result.winner === 'go').length,
           errors: results.filter((result) => result.winner === 'error').length,
-          avgNodeMs:
-            valid.length > 0
-              ? Math.round(
-                  (valid.reduce((sum, result) => sum + result.nodeMs, 0) /
-                    valid.length) *
-                    100,
-                ) / 100
-              : 0,
-          avgGoMs:
-            valid.length > 0
-              ? Math.round(
-                  (valid.reduce((sum, result) => sum + result.goMs, 0) /
-                    valid.length) *
-                    100,
-                ) / 100
-              : 0,
+          // 누적 평균도 표본이 없으면 null. 아래 done 집계와 같은 규칙을 쓴다.
+          avgNodeMs: summarizeLatencies(pickLatencies(valid, 'nodeMs')).avgMs,
+          avgGoMs: summarizeLatencies(pickLatencies(valid, 'goMs')).avgMs,
         });
       }
 
@@ -194,8 +203,8 @@ export class LoadTestCompareService {
         errors: results.filter((result) => result.winner === 'error').length,
         // 전량 실패하면 각 지표가 null 로 나간다. 0 으로 메우면 두 엔진 다
         // 지연 0ms 로 보여 비교가 성립한 것처럼 읽힌다.
-        node: summarizeLatencies(valid.map((result) => result.nodeMs)),
-        go: summarizeLatencies(valid.map((result) => result.goMs)),
+        node: summarizeLatencies(pickLatencies(valid, 'nodeMs')),
+        go: summarizeLatencies(pickLatencies(valid, 'goMs')),
       });
 
       subject.complete();

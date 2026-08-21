@@ -60,6 +60,35 @@ flowchart TD
   - `WORKER_MAX_CUSTOM_CONCURRENCY`
 - 알 수 없는 workloadType은 일반 큐 fallback으로 처리하고 카운트(`workloadGeneralQueueFallbackCount`)에 누적
 
+## 워커 엔진
+
+`WORKER_ENGINE` 값으로 작업 실행 백엔드를 고릅니다. 목록 밖의 값을 넣으면 기본값으로 넘어가지 않고 부팅이 실패합니다.
+
+| 값 | 상태 | 설명 |
+|---|---|---|
+| `node` (기본) | 동작 | Worker Thread 풀에서 실행. 워커 비활성 시 메인 스레드 처리 |
+| `go` | 동작 | Go 사이드카(gRPC)로 위임. `GO_ENGINE_HOST`·`GO_ENGINE_PORT` 필요 |
+| `both` | 동작 | Node·Go 비교 벤치마크(`/load-test/compare`) 전용 |
+| `kafka` | **부분 구현** | 프로듀서 연결까지만. 아래 주의사항 참고 |
+
+### `kafka` 모드 현재 상태
+
+프로듀서는 실제로 브로커에 연결되고 `KAFKA_BROKERS` 검증도 부팅 시점에 걸리지만, **큐 처리 본류는 아직 이 백엔드를 거치지 않습니다.** 이 모드로 띄워도 작업은 Node 워커풀에서 처리되며 카프카로 발행되지 않습니다.
+
+- 배선 여부는 `GET /queue-stats` 의 `engineBackendWired` 로 확인할 수 있습니다(현재 항상 `false`)
+- 부팅 시 경고 로그로도 같은 내용을 알립니다
+- 연결 작업은 [docs/kafka-integration-plan.md](docs/kafka-integration-plan.md) 참고
+
+우선순위별 토픽 배정 규칙(구현은 되어 있으나 아직 호출되지 않음):
+
+| priority | 토픽 |
+|---|---|
+| `>= 5` | `tasks.high` |
+| `>= 0` | `tasks.normal` |
+| `< 0` | `tasks.low` |
+
+메시지 키는 `requestId`(없으면 `taskId`)를 씁니다. 같은 키는 같은 파티션으로 가서 순서가 보장됩니다.
+
 ## 엔드포인트
 - `GET /health`
   - 프로세스/메모리/시스템 상태 반환
@@ -112,6 +141,19 @@ npm test
 - `QUEUE_SNAPSHOT_PATH`: 스냅샷 파일 경로
 - `QUEUE_SNAPSHOT_INTERVAL_MS`: 스냅샷 저장 주기
 - `QUEUE_SNAPSHOT_MAX_AGE_MS`: 만료된 스냅샷 무시 기준
+
+### 워커 엔진
+- `WORKER_ENGINE`: `node` | `go` | `both` | `kafka` (기본 `node`). 목록 밖 값이면 부팅 실패
+- `GO_ENGINE_HOST`, `GO_ENGINE_PORT`: Go 사이드카 주소 (`go`·`both` 모드)
+- `KAFKA_BROKERS`: 콤마로 구분한 브로커 주소. `kafka` 모드에서 필수이며 비면 부팅 실패
+- `KAFKA_CLIENT_ID`: 프로듀서 식별자 (기본 `bulk-traffic-producer`)
+
+### 벤치마크 저장소
+- `BENCH_DB_DRIVER`: `sqlite`(기본) 또는 `postgresql`
+- `BENCH_DB_PATH`: SQLite 파일 경로
+- `BENCH_PG_HOST`, `BENCH_PG_PORT`, `BENCH_PG_DATABASE`, `BENCH_PG_USER`, `BENCH_PG_PASSWORD`
+  - `postgresql` 드라이버에서 **전부 필수**입니다. 기본값을 두지 않아서, 값이 빠지면 부팅이 실패합니다. 의도하지 않은 DB 에 붙어 측정하는 상황을 막기 위해서입니다
+- `BENCH_PG_POOL_SIZE`: 커넥션 풀 크기 (기본 10)
 
 ## 운영 관측 포인트
 - API: `GET /queue-stats`

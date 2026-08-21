@@ -27,7 +27,12 @@ export class EngineRouterService implements OnModuleInit {
       this.logger.log('Go 엔진 사이드카 활성화');
     }
     if (this.engine === 'kafka') {
-      this.logger.log('Kafka 프로듀서 백엔드 활성화');
+      // 프로듀서는 연결되지만 큐 처리 본류는 아직 이 백엔드를 거치지 않는다.
+      // 여기서 '활성화'라고만 적으면 작업이 카프카로 나가는 줄로 읽힌다.
+      this.logger.warn(
+        'Kafka 프로듀서는 연결되지만 작업 발행 경로는 아직 연결되지 않았습니다. ' +
+          '이 모드에서도 큐 처리는 Node 워커풀이 담당합니다.',
+      );
     }
   }
 
@@ -35,9 +40,17 @@ export class EngineRouterService implements OnModuleInit {
     return this.engine;
   }
 
+  /** 큐 처리 본류가 이 백엔드를 거치는지. 지금은 어느 모드에서도 거치지 않는다. */
+  isBackendWired(): boolean {
+    return false;
+  }
+
   /**
-   * 현재 엔진 모드에 해당하는 백엔드. node·both 모드는 메인 스레드·워커풀이
-   * 담당하므로 여기서는 null 을 돌려준다(호출 측이 기존 경로를 그대로 사용).
+   * 현재 엔진 모드에 해당하는 백엔드.
+   *
+   * 아직 큐 처리 본류(QueueProcessorService)에 연결되어 있지 않다.
+   * 연결 작업은 docs/kafka-integration-plan.md 의 다음 단계다.
+   * node·both 모드는 메인 스레드·워커풀이 담당하므로 null 을 돌려준다.
    */
   getBackend(): WorkerBackend | null {
     if (this.engine === 'kafka') return this.kafkaProducerBackend;

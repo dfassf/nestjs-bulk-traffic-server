@@ -1,16 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Worker } from 'worker_threads';
 
-interface WorkerMessage {
-  success?: boolean;
-  result?: unknown;
-  error?: string;
-  initialized?: boolean;
-  healthCheck?: boolean;
-  operation?: string;
-  duration?: number;
-}
-
 @Injectable()
 export class WorkerHealthService {
   private readonly logger = new Logger(WorkerHealthService.name);

@@ -137,13 +137,16 @@ const processors = {
   },
 
   custom: {
+    // 실패는 반드시 throw 한다. { error } 를 정상 반환하면 상위(worker-pool)가
+    // success: true 로 집계해서, 전량 실패해도 통계상 100% 성공으로 보인다.
+    // 이 파일의 다른 실패 경로(지원되지 않는 작업 유형 등)와 같은 규칙이다.
     execute: (params, functionCode) => {
       if (!ALLOW_CUSTOM_WORKLOAD) {
-        return { error: 'custom workload 기능이 비활성화되어 있습니다' };
+        throw new Error('custom workload 기능이 비활성화되어 있습니다');
       }
 
       if (!functionCode) {
-        return { error: '실행할 함수 코드가 제공되지 않았습니다' };
+        throw new Error('실행할 함수 코드가 제공되지 않았습니다');
       }
 
       try {
@@ -154,12 +157,11 @@ const processors = {
 
         return dynamicFunction(params);
       } catch (error) {
-        return {
-          error:
-            error instanceof Error
-              ? `함수 실행 중 오류: ${error.message}`
-              : '함수 실행 중 알 수 없는 오류',
-        };
+        throw new Error(
+          error instanceof Error
+            ? `함수 실행 중 오류: ${error.message}`
+            : '함수 실행 중 알 수 없는 오류',
+        );
       }
     },
   },

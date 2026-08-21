@@ -18,6 +18,8 @@ export class QueueStatsController {
       timestamp: new Date().toISOString(),
       ...this.queueService.getQueueStats(),
       engineMode: this.engineRouter.getEngine(),
+      // 엔진 모드만 보면 그 백엔드로 작업이 나가는 줄로 읽힌다. 실제 배선 여부를 같이 알린다.
+      engineBackendWired: this.engineRouter.isBackendWired(),
       goEngineConnected: this.goEngineClient.isConnected(),
       memory: {
         heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),

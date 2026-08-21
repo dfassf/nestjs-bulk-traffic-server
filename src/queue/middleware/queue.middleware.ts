@@ -4,11 +4,18 @@ import { randomUUID } from 'crypto';
 import { QueueService } from '../queue.service';
 import { QueueRequestAnalyzer } from './queue-request-analyzer';
 import { RequestStateStore } from './request-state.store';
+import { readPositiveIntEnv } from '../utils/env';
 
 @Injectable()
 export class QueueMiddleware implements NestMiddleware {
   private readonly logger = new Logger(QueueMiddleware.name);
-  private readonly requestProcessingTimeoutMs = 10000;
+  // 미들웨어를 지나는 요청은 analyzer 가 항상 timeout 을 채워 넣기 때문에,
+  // 이 값이 곧 HTTP 경로의 실행 타임아웃이 된다. 여기서 환경변수를 안 읽으면
+  // QUEUE_EXECUTION_TIMEOUT_MS 를 조정해도 HTTP 요청에는 아무 효과가 없다.
+  private readonly requestProcessingTimeoutMs = readPositiveIntEnv(
+    'QUEUE_EXECUTION_TIMEOUT_MS',
+    10000,
+  );
   private readonly requestStateTtlMs = 30000;
   private readonly allowCustomWorkload =
     process.env.ALLOW_CUSTOM_WORKLOAD === 'true';

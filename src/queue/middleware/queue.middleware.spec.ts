@@ -62,6 +62,53 @@ describe('QueueMiddleware', () => {
     process.env.ALLOW_CUSTOM_WORKLOAD = originalAllowCustomWorkload;
   });
 
+  // analyzer 가 요청마다 timeout 을 채워 넣기 때문에, 미들웨어가 환경변수를
+  // 안 읽으면 QUEUE_EXECUTION_TIMEOUT_MS 를 낮춰도 HTTP 경로엔 효과가 없다.
+  it('QUEUE_EXECUTION_TIMEOUT_MS 를 요청 타임아웃으로 반영해야 한다', async () => {
+    const original = process.env.QUEUE_EXECUTION_TIMEOUT_MS;
+    process.env.QUEUE_EXECUTION_TIMEOUT_MS = '4321';
+    try {
+      const scoped = new QueueMiddleware(
+        queueService as unknown as QueueService,
+      );
+      const req = createRequest({ path: '/api/items', url: '/api/items' });
+      const res = createResponse();
+      queueService.enqueue.mockResolvedValue({ ok: true });
+
+      await scoped.use(req, res, jest.fn());
+
+      expect(queueService.enqueue).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ timeout: 4321 }),
+      );
+    } finally {
+      if (original === undefined) delete process.env.QUEUE_EXECUTION_TIMEOUT_MS;
+      else process.env.QUEUE_EXECUTION_TIMEOUT_MS = original;
+    }
+  });
+
+  it('환경변수가 없으면 기본 타임아웃(10000ms)을 쓴다', async () => {
+    const original = process.env.QUEUE_EXECUTION_TIMEOUT_MS;
+    delete process.env.QUEUE_EXECUTION_TIMEOUT_MS;
+    try {
+      const scoped = new QueueMiddleware(
+        queueService as unknown as QueueService,
+      );
+      const req = createRequest({ path: '/api/items', url: '/api/items' });
+      const res = createResponse();
+      queueService.enqueue.mockResolvedValue({ ok: true });
+
+      await scoped.use(req, res, jest.fn());
+
+      expect(queueService.enqueue).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ timeout: 10000 }),
+      );
+    } finally {
+      if (original !== undefined) process.env.QUEUE_EXECUTION_TIMEOUT_MS = original;
+    }
+  });
+
   it('헬스체크 경로는 큐를 우회해야 한다', async () => {
     const req = createRequest({ path: '/health', url: '/health' });
     const res = createResponse();

@@ -47,6 +47,13 @@ lerna-debug.log*
 
 # benchmark db
 .bench.sqlite
+.bench.e2e.sqlite
+# WAL 모드가 본체 옆에 함께 만드는 파일들
+*.sqlite-shm
+*.sqlite-wal
+
+# 주문 이벤트 DB (카프카 실험 기록)
+.orders.sqlite
 
 # Go binaries
 go-engine/engine

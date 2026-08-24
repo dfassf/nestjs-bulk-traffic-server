@@ -23,7 +23,9 @@ export class SqliteBenchDriver implements BenchDriver {
         created_at INTEGER NOT NULL
       )
     `);
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_bench_key ON bench_records(key)`);
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_bench_key ON bench_records(key)`,
+    );
   }
 
   async destroy(): Promise<void> {
@@ -38,7 +40,11 @@ export class SqliteBenchDriver implements BenchDriver {
     const start = performance.now();
     const batchInsert = this.db.transaction(() => {
       for (let i = 0; i < count; i++) {
-        insert.run(`key-${Date.now()}-${i}`, JSON.stringify({ i, data: 'x'.repeat(100) }), Date.now());
+        insert.run(
+          `key-${Date.now()}-${i}`,
+          JSON.stringify({ i, data: 'x'.repeat(100) }),
+          Date.now(),
+        );
       }
     });
     batchInsert();
@@ -54,13 +60,25 @@ export class SqliteBenchDriver implements BenchDriver {
   }
 
   async benchRead(count: number): Promise<BenchResult> {
-    const totalRows = this.db.prepare('SELECT COUNT(*) as cnt FROM bench_records').get();
+    const totalRows = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM bench_records')
+      .get();
     if (totalRows.cnt === 0) {
-      return { operation: 'read', count: 0, totalMs: 0, avgMs: 0, opsPerSec: 0 };
+      return {
+        operation: 'read',
+        count: 0,
+        totalMs: 0,
+        avgMs: 0,
+        opsPerSec: 0,
+      };
     }
 
-    const selectByKey = this.db.prepare('SELECT * FROM bench_records WHERE key = ?');
-    const selectRange = this.db.prepare('SELECT * FROM bench_records ORDER BY id DESC LIMIT ?');
+    const selectByKey = this.db.prepare(
+      'SELECT * FROM bench_records WHERE key = ?',
+    );
+    const selectRange = this.db.prepare(
+      'SELECT * FROM bench_records ORDER BY id DESC LIMIT ?',
+    );
 
     const start = performance.now();
     for (let i = 0; i < count; i++) {
@@ -82,7 +100,8 @@ export class SqliteBenchDriver implements BenchDriver {
   }
 
   async getRowCount(): Promise<number> {
-    return this.db.prepare('SELECT COUNT(*) as cnt FROM bench_records').get().cnt;
+    return this.db.prepare('SELECT COUNT(*) as cnt FROM bench_records').get()
+      .cnt;
   }
 
   async reset(): Promise<void> {

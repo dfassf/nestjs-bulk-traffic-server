@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { EnqueueOptions, WorkloadType } from './interfaces/queue-task.interface';
+import {
+  EnqueueOptions,
+  WorkloadType,
+} from './interfaces/queue-task.interface';
 
 export interface NormalizedEnqueueOptions {
   priority: number;

@@ -1,4 +1,12 @@
-import { Body, Controller, Delete, Get, HttpCode, Post, Sse } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Post,
+  Sse,
+} from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { EngineRouterService } from '../engine-router.service';
 import { LoadTestCompareService } from '../load-test/load-test-compare.service';
@@ -80,7 +88,8 @@ export class LoadTestController {
   @HttpCode(200)
   @Sse()
   runStream(
-    @Body() body: {
+    @Body()
+    body: {
       type: 'cpu' | 'io' | 'mixed' | 'db-write' | 'db-read';
       count?: number;
       iterations?: number;
@@ -97,7 +106,8 @@ export class LoadTestController {
   @HttpCode(200)
   @Sse()
   compareStream(
-    @Body() body: {
+    @Body()
+    body: {
       count?: number;
       max?: number;
       testType?: 'cpu' | 'io';

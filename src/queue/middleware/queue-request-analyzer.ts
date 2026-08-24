@@ -72,7 +72,10 @@ export class QueueRequestAnalyzer {
 
     const bodyRecord = this.asObject(req.body);
 
-    if (bodyRecord?.workloadType && typeof bodyRecord.workloadType === 'string') {
+    if (
+      bodyRecord?.workloadType &&
+      typeof bodyRecord.workloadType === 'string'
+    ) {
       workloadType = bodyRecord.workloadType.trim().toLowerCase();
     }
 

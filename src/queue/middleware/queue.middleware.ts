@@ -86,7 +86,8 @@ export class QueueMiddleware implements NestMiddleware {
         },
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : '알 수 없는 오류';
+      const message =
+        error instanceof Error ? error.message : '알 수 없는 오류';
       this.logger.error(`[${requestId}] 큐 처리 중 오류: ${message}`);
 
       const isCustomDisabled = message.includes(

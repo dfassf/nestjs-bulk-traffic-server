@@ -50,7 +50,9 @@ export const DEFAULT_WORKER_ENGINE: WorkerEngine = 'node';
  * 알 수 없는 값은 기본값으로 떨어뜨리지 않고 null 을 돌려준다.
  * 오타를 조용히 삼키지 않기 위해서이며, 부팅 시 검증은 validateEnv 가 맡는다.
  */
-export function parseWorkerEngine(raw: string | undefined): WorkerEngine | null {
+export function parseWorkerEngine(
+  raw: string | undefined,
+): WorkerEngine | null {
   if (raw === undefined || raw === null) return null;
 
   const normalized = String(raw).trim().toLowerCase();

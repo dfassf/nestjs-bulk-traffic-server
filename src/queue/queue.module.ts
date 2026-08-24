@@ -54,19 +54,26 @@ import { LoadTestCompareService } from './load-test/load-test-compare.service';
     {
       // 프로듀서가 스스로 켜짐 여부를 판단하지 않도록 모듈이 정해서 넘긴다.
       provide: KAFKA_PRODUCER_CONFIG,
-      useFactory: () => kafkaProducerConfigFromEnv(readWorkerEngineEnv() === 'kafka'),
+      useFactory: () =>
+        kafkaProducerConfigFromEnv(readWorkerEngineEnv() === 'kafka'),
     },
     {
       provide: BENCH_DRIVER,
       useFactory: async () => {
-        const driver = process.env.BENCH_DB_DRIVER === 'postgresql'
-          ? new PgBenchDriver()
-          : new SqliteBenchDriver();
+        const driver =
+          process.env.BENCH_DB_DRIVER === 'postgresql'
+            ? new PgBenchDriver()
+            : new SqliteBenchDriver();
         await driver.init();
         return driver;
       },
     },
   ],
-  exports: [QueueService, MemoryService, WorkerPoolService, EngineRouterService],
+  exports: [
+    QueueService,
+    MemoryService,
+    WorkerPoolService,
+    EngineRouterService,
+  ],
 })
 export class QueueModule {}

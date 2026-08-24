@@ -1,7 +1,17 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+  Optional,
+} from '@nestjs/common';
 import { Kafka, Producer, logLevel } from 'kafkajs';
 import { QueueTask } from './interfaces/queue-task.interface';
-import { WorkerBackend, WorkerBackendResult } from './interfaces/worker-backend.interface';
+import {
+  WorkerBackend,
+  WorkerBackendResult,
+} from './interfaces/worker-backend.interface';
 import { readKafkaBrokersEnv } from './utils/env';
 
 const TOPIC_HIGH = 'tasks.high';
@@ -19,7 +29,9 @@ export interface KafkaProducerConfig {
 }
 
 /** 환경변수에서 프로듀서 설정을 만든다. 모듈 등록부(useFactory)에서 사용. */
-export function kafkaProducerConfigFromEnv(enabled: boolean): KafkaProducerConfig {
+export function kafkaProducerConfigFromEnv(
+  enabled: boolean,
+): KafkaProducerConfig {
   return {
     brokers: readKafkaBrokersEnv(),
     clientId: process.env.KAFKA_CLIENT_ID ?? 'bulk-traffic-producer',
@@ -41,7 +53,9 @@ export function kafkaProducerConfigFromEnv(enabled: boolean): KafkaProducerConfi
  * 켜짐 여부는 이 클래스가 아니라 QueueModule 이 정한다(config.enabled).
  */
 @Injectable()
-export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModuleDestroy {
+export class KafkaProducerBackend
+  implements WorkerBackend, OnModuleInit, OnModuleDestroy
+{
   readonly name = 'kafka';
   private readonly logger = new Logger(KafkaProducerBackend.name);
   private readonly config: KafkaProducerConfig;
@@ -61,7 +75,9 @@ export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModu
 
   async onModuleInit(): Promise<void> {
     if (!this.config.enabled) {
-      this.logger.log('워커 엔진이 kafka 가 아니라 프로듀서 초기화를 건너뜁니다.');
+      this.logger.log(
+        '워커 엔진이 kafka 가 아니라 프로듀서 초기화를 건너뜁니다.',
+      );
       return;
     }
     await this.connect();
@@ -78,7 +94,9 @@ export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModu
   private async connect(): Promise<void> {
     const { brokers, clientId } = this.config;
     if (brokers.length === 0) {
-      throw new Error('Kafka 브로커 주소가 비어 있습니다. KAFKA_BROKERS 를 확인하세요.');
+      throw new Error(
+        'Kafka 브로커 주소가 비어 있습니다. KAFKA_BROKERS 를 확인하세요.',
+      );
     }
 
     this.kafka = new Kafka({
@@ -90,7 +108,9 @@ export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModu
     this.producer = this.kafka.producer();
     await this.producer.connect();
     this.connected = true;
-    this.logger.log(`Kafka 프로듀서 연결 성공: brokers=[${brokers.join(',')}] clientId=${clientId}`);
+    this.logger.log(
+      `Kafka 프로듀서 연결 성공: brokers=[${brokers.join(',')}] clientId=${clientId}`,
+    );
   }
 
   isConnected(): boolean {
@@ -99,7 +119,9 @@ export class KafkaProducerBackend implements WorkerBackend, OnModuleInit, OnModu
 
   async execute(task: QueueTask): Promise<WorkerBackendResult> {
     if (!this.connected) {
-      throw new Error('Kafka 프로듀서가 연결되지 않았습니다. WORKER_ENGINE 값과 브로커 상태를 확인하세요.');
+      throw new Error(
+        'Kafka 프로듀서가 연결되지 않았습니다. WORKER_ENGINE 값과 브로커 상태를 확인하세요.',
+      );
     }
 
     const topic = pickTopic(task.priority);

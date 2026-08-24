@@ -1,7 +1,13 @@
 import { Admin, Consumer, Kafka, logLevel } from 'kafkajs';
 import { KafkaProducerBackend } from '../src/queue/kafka-producer.backend';
-import { QueueTask, WorkloadType } from '../src/queue/interfaces/queue-task.interface';
-import { DEFAULT_BROKERS, isKafkaAvailable } from './helpers/kafka-availability';
+import {
+  QueueTask,
+  WorkloadType,
+} from '../src/queue/interfaces/queue-task.interface';
+import {
+  DEFAULT_BROKERS,
+  isKafkaAvailable,
+} from './helpers/kafka-availability';
 
 /**
  * Kafka 프로듀서 백엔드 실 브로커 e2e.
@@ -22,7 +28,9 @@ describe('KafkaProducerBackend (실 브로커 e2e)', () => {
     available = await isKafkaAvailable(brokers);
     if (!available) {
       // eslint-disable-next-line no-console
-      console.warn(`[e2e] Kafka 브로커(${brokers.join(',')}) 미연결로 스위트 스킵`);
+      console.warn(
+        `[e2e] Kafka 브로커(${brokers.join(',')}) 미연결로 스위트 스킵`,
+      );
       return;
     }
 
@@ -83,37 +91,49 @@ describe('KafkaProducerBackend (실 브로커 e2e)', () => {
     };
   }
 
-  async function readOne(topic: string, partition: number, offset: string): Promise<{ key: string; value: string } | null> {
-    const consumer: Consumer = kafka.consumer({ groupId: `e2e-verify-${topic}-${offset}-${Date.now()}` });
+  async function readOne(
+    topic: string,
+    partition: number,
+    offset: string,
+  ): Promise<{ key: string; value: string } | null> {
+    const consumer: Consumer = kafka.consumer({
+      groupId: `e2e-verify-${topic}-${offset}-${Date.now()}`,
+    });
     await consumer.connect();
     try {
       // fromBeginning 대신 seek로 정확한 오프셋 소비 (offset+1 까지만 대기)
       await consumer.subscribe({ topic, fromBeginning: false });
-      const result = await new Promise<{ key: string; value: string } | null>((resolve, reject) => {
-        const timer = setTimeout(() => resolve(null), 8000);
-        consumer
-          .run({
-            eachMessage: async ({ topic: t, partition: p, message }) => {
-              if (t === topic && p === partition && message.offset === offset) {
-                clearTimeout(timer);
-                resolve({
-                  key: message.key?.toString() ?? '',
-                  value: message.value?.toString() ?? '',
-                });
-              }
-            },
-          })
-          .catch(reject);
-        // subscribe 후 offset 지정 (run 다음에 seek 호출)
-        setTimeout(() => {
-          try {
-            consumer.seek({ topic, partition, offset });
-          } catch (err) {
-            clearTimeout(timer);
-            reject(err);
-          }
-        }, 200);
-      });
+      const result = await new Promise<{ key: string; value: string } | null>(
+        (resolve, reject) => {
+          const timer = setTimeout(() => resolve(null), 8000);
+          consumer
+            .run({
+              eachMessage: async ({ topic: t, partition: p, message }) => {
+                if (
+                  t === topic &&
+                  p === partition &&
+                  message.offset === offset
+                ) {
+                  clearTimeout(timer);
+                  resolve({
+                    key: message.key?.toString() ?? '',
+                    value: message.value?.toString() ?? '',
+                  });
+                }
+              },
+            })
+            .catch(reject);
+          // subscribe 후 offset 지정 (run 다음에 seek 호출)
+          setTimeout(() => {
+            try {
+              consumer.seek({ topic, partition, offset });
+            } catch (err) {
+              clearTimeout(timer);
+              reject(err);
+            }
+          }, 200);
+        },
+      );
       return result;
     } finally {
       await consumer.disconnect();
@@ -130,7 +150,11 @@ describe('KafkaProducerBackend (실 브로커 e2e)', () => {
     expect(result.dispatch.topic).toBe('tasks.high');
     expect(Number(result.dispatch.offset)).toBeGreaterThanOrEqual(0);
 
-    const read = await readOne(result.dispatch.topic, result.dispatch.partition, result.dispatch.offset);
+    const read = await readOne(
+      result.dispatch.topic,
+      result.dispatch.partition,
+      result.dispatch.offset,
+    );
     expect(read).not.toBeNull();
     expect(read!.key).toBe(String(task.requestId));
 
@@ -164,7 +188,8 @@ describe('KafkaProducerBackend (실 브로커 e2e)', () => {
     const r1 = await backend.execute(t1);
     const r2 = await backend.execute(t2);
 
-    if (r1.mode !== 'async' || r2.mode !== 'async') throw new Error('async 모드여야 함');
+    if (r1.mode !== 'async' || r2.mode !== 'async')
+      throw new Error('async 모드여야 함');
     expect(r1.dispatch.topic).toBe(r2.dispatch.topic);
     expect(r1.dispatch.partition).toBe(r2.dispatch.partition);
   });

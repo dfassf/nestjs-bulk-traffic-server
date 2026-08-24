@@ -29,8 +29,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message =
         typeof exceptionResponse === 'string'
           ? exceptionResponse
-          : (exceptionResponse as Record<string, unknown>).message?.toString() ||
-            exception.message;
+          : (
+              exceptionResponse as Record<string, unknown>
+            ).message?.toString() || exception.message;
     } else if (exception instanceof Error) {
       this.logger.error(
         `처리되지 않은 예외: ${exception.message}`,

@@ -24,7 +24,11 @@ describe('WorkerPoolService', () => {
 
   const createService = async (): Promise<WorkerPoolService> => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [WorkerPoolService, WorkerHealthService, WorkerTaskRouterService],
+      providers: [
+        WorkerPoolService,
+        WorkerHealthService,
+        WorkerTaskRouterService,
+      ],
     }).compile();
 
     return module.get<WorkerPoolService>(WorkerPoolService);
@@ -130,13 +134,18 @@ describe('WorkerPoolService', () => {
 
   it('타입별 동시성 제한을 넘기면 dispatch가 차단되어야 한다', async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [WorkerPoolService, WorkerHealthService, WorkerTaskRouterService],
+      providers: [
+        WorkerPoolService,
+        WorkerHealthService,
+        WorkerTaskRouterService,
+      ],
     }).compile();
 
     const router = module.get<WorkerTaskRouterService>(WorkerTaskRouterService);
     const routerInternal = router as any;
 
-    routerInternal.activeByType[WorkloadType.MEMORY] = routerInternal.memoryConcurrencyLimit;
+    routerInternal.activeByType[WorkloadType.MEMORY] =
+      routerInternal.memoryConcurrencyLimit;
 
     expect(router.canDispatchType(WorkloadType.MEMORY)).toBe(false);
     expect(router.canDispatchType(WorkloadType.CPU)).toBe(true);

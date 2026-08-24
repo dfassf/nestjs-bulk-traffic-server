@@ -20,7 +20,10 @@ describe('WorkerTaskRouterService', () => {
     ...overrides,
   });
 
-  const wrap = (task: QueueTask, extra: Partial<WorkerTaskData> = {}): WorkerTaskData => ({
+  const wrap = (
+    task: QueueTask,
+    extra: Partial<WorkerTaskData> = {},
+  ): WorkerTaskData => ({
     task,
     params: {},
     ...extra,
@@ -42,31 +45,41 @@ describe('WorkerTaskRouterService', () => {
 
     it('task.workloadType을 반영해야 한다', () => {
       expect(
-        router.determineTaskType(wrap(createTask({ workloadType: WorkloadType.CPU }))),
+        router.determineTaskType(
+          wrap(createTask({ workloadType: WorkloadType.CPU })),
+        ),
       ).toBe(WorkloadType.CPU);
     });
 
     it('functionCode가 있으면 CUSTOM으로 분류해야 한다', () => {
       expect(
-        router.determineTaskType(wrap(createTask({ functionCode: 'return 1;' }))),
+        router.determineTaskType(
+          wrap(createTask({ functionCode: 'return 1;' })),
+        ),
       ).toBe(WorkloadType.CUSTOM);
     });
 
     it('taskData.functionCode도 CUSTOM으로 분류해야 한다', () => {
       expect(
-        router.determineTaskType(wrap(createTask(), { functionCode: 'return 1;' })),
+        router.determineTaskType(
+          wrap(createTask(), { functionCode: 'return 1;' }),
+        ),
       ).toBe(WorkloadType.CUSTOM);
     });
 
     it('아무 힌트가 없으면 UNKNOWN을 반환해야 한다', () => {
-      expect(router.determineTaskType(wrap(createTask()))).toBe(WorkloadType.UNKNOWN);
+      expect(router.determineTaskType(wrap(createTask()))).toBe(
+        WorkloadType.UNKNOWN,
+      );
     });
   });
 
   describe('determineOperation', () => {
     it('taskData.operation이 있으면 그대로 반환해야 한다', () => {
       expect(
-        router.determineOperation(wrap(createTask(), { operation: 'custom-op' })),
+        router.determineOperation(
+          wrap(createTask(), { operation: 'custom-op' }),
+        ),
       ).toBe('custom-op');
     });
 

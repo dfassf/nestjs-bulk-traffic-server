@@ -87,7 +87,9 @@ export class QueueProcessorService {
       }
 
       if (workerDispatchCount > 0) {
-        this.workerPoolService.processWorkerTasks(this.onWorkerTaskDispatchFailed);
+        this.workerPoolService.processWorkerTasks(
+          this.onWorkerTaskDispatchFailed,
+        );
       }
     } finally {
       this.state.isProcessingQueue = false;
@@ -109,7 +111,10 @@ export class QueueProcessorService {
       this.state.maxConcurrentRequests,
       (processed, activeChange) => {
         this.statsService.incrementProcessed(processed);
-        this.state.activeRequests = Math.max(0, this.state.activeRequests + activeChange);
+        this.state.activeRequests = Math.max(
+          0,
+          this.state.activeRequests + activeChange,
+        );
 
         if (activeChange < 0) {
           this.requestProcessQueue();

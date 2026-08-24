@@ -34,7 +34,8 @@ export class WorkerPoolService implements OnModuleDestroy {
   private workerTaskQueue: WorkerTaskData[] = [];
   private assignedTasks = new Map<number, WorkerTaskData>();
 
-  private onResult: ((workerId: number, result: WorkerMessage) => void) | null = null;
+  private onResult: ((workerId: number, result: WorkerMessage) => void) | null =
+    null;
   private shuttingDown = false;
 
   constructor(
@@ -68,9 +69,13 @@ export class WorkerPoolService implements OnModuleDestroy {
     };
   }
 
-  initWorkerPool(onResult: (workerId: number, result: WorkerMessage) => void): void {
+  initWorkerPool(
+    onResult: (workerId: number, result: WorkerMessage) => void,
+  ): void {
     if (!this.useWorkers) {
-      this.logger.warn('워커 시스템이 비활성화되었습니다. 메인 스레드 처리로 동작합니다.');
+      this.logger.warn(
+        '워커 시스템이 비활성화되었습니다. 메인 스레드 처리로 동작합니다.',
+      );
       return;
     }
 
@@ -122,7 +127,10 @@ export class WorkerPoolService implements OnModuleDestroy {
       if (!worker || this.workerBusy[i]) continue;
       if (this.workerTaskQueue.length === 0) break;
 
-      const picked = this.router.dequeueDispatchableTask(this.workerTaskQueue, onTaskFailed);
+      const picked = this.router.dequeueDispatchableTask(
+        this.workerTaskQueue,
+        onTaskFailed,
+      );
       if (!picked) continue;
       const { taskData, type } = picked;
 
@@ -139,9 +147,10 @@ export class WorkerPoolService implements OnModuleDestroy {
         this.router.incrementActiveByType(type);
         this.assignedTasks.set(i, taskData);
       } catch (error) {
-        const message = error instanceof Error
-          ? error.message
-          : '워커 작업 전송 중 알 수 없는 오류';
+        const message =
+          error instanceof Error
+            ? error.message
+            : '워커 작업 전송 중 알 수 없는 오류';
         taskData.task.reject(new Error(`워커 작업 전송 실패: ${message}`));
         onTaskFailed(taskData.task);
         this.workerBusy[i] = false;
@@ -230,7 +239,10 @@ export class WorkerPoolService implements OnModuleDestroy {
     worker.on('exit', (code) => {
       if (this.shuttingDown) return;
       if (code !== 0) {
-        this.handleWorkerFailure(index, new Error(`워커 비정상 종료(code=${code})`));
+        this.handleWorkerFailure(
+          index,
+          new Error(`워커 비정상 종료(code=${code})`),
+        );
       }
     });
 
@@ -254,7 +266,9 @@ export class WorkerPoolService implements OnModuleDestroy {
         const taskData = this.assignedTasks.get(index);
         this.assignedTasks.delete(index);
         if (taskData) {
-          this.router.decrementActiveByType(this.router.determineTaskType(taskData));
+          this.router.decrementActiveByType(
+            this.router.determineTaskType(taskData),
+          );
         }
         taskData?.task.reject(
           new Error(`워커 장애로 작업이 실패했습니다: ${error.message}`),

@@ -20,7 +20,9 @@ jest.mock('kafkajs', () => {
     producer: producerCtor,
     admin: jest.fn(() => ({
       connect: jest.fn(),
-      listTopics: jest.fn().mockResolvedValue(['tasks.high', 'tasks.normal', 'tasks.low']),
+      listTopics: jest
+        .fn()
+        .mockResolvedValue(['tasks.high', 'tasks.normal', 'tasks.low']),
       disconnect: jest.fn(),
     })),
   }));
@@ -33,7 +35,9 @@ jest.mock('kafkajs', () => {
 
 const kafkaMocks = () => (jest.requireMock('kafkajs') as any).__mocks;
 
-function buildConfig(overrides: Partial<KafkaProducerConfig> = {}): KafkaProducerConfig {
+function buildConfig(
+  overrides: Partial<KafkaProducerConfig> = {},
+): KafkaProducerConfig {
   return {
     brokers: ['broker-a:9092', 'broker-b:9092'],
     clientId: 'test-client',
@@ -151,7 +155,8 @@ describe('KafkaProducerBackend', () => {
         messages: [expect.objectContaining({ key: 'req-42' })],
       }),
     );
-    if (result.mode !== 'async') throw new Error('kafka 백엔드는 async 모드여야 함');
+    if (result.mode !== 'async')
+      throw new Error('kafka 백엔드는 async 모드여야 함');
     expect(result.dispatch.topic).toBe('tasks.high');
     expect(result.dispatch.partition).toBe(0);
     expect(result.dispatch.offset).toBe('10');
@@ -160,7 +165,12 @@ describe('KafkaProducerBackend', () => {
 
   it('priority 0~4 는 tasks.normal 로 발행된다', async () => {
     kafkaMocks().sendMock.mockResolvedValue([
-      { topicName: 'tasks.normal', partition: 1, baseOffset: '3', errorCode: 0 },
+      {
+        topicName: 'tasks.normal',
+        partition: 1,
+        baseOffset: '3',
+        errorCode: 0,
+      },
     ]);
     const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
@@ -191,12 +201,19 @@ describe('KafkaProducerBackend', () => {
 
   it('메시지 페이로드에 taskId·priority·params 가 실려 나간다', async () => {
     kafkaMocks().sendMock.mockResolvedValue([
-      { topicName: 'tasks.normal', partition: 0, baseOffset: '0', errorCode: 0 },
+      {
+        topicName: 'tasks.normal',
+        partition: 0,
+        baseOffset: '0',
+        errorCode: 0,
+      },
     ]);
     const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
 
-    await backend.execute(buildTask({ priority: 3, params: { userId: 'abc' } }));
+    await backend.execute(
+      buildTask({ priority: 3, params: { userId: 'abc' } }),
+    );
 
     const call = kafkaMocks().sendMock.mock.calls[0][0];
     const value = JSON.parse(call.messages[0].value);
@@ -207,13 +224,20 @@ describe('KafkaProducerBackend', () => {
 
   it('key 는 requestId 우선, 없으면 taskId 로 매긴다', async () => {
     kafkaMocks().sendMock.mockResolvedValue([
-      { topicName: 'tasks.normal', partition: 0, baseOffset: '0', errorCode: 0 },
+      {
+        topicName: 'tasks.normal',
+        partition: 0,
+        baseOffset: '0',
+        errorCode: 0,
+      },
     ]);
     const backend = new KafkaProducerBackend(buildConfig());
     await backend.onModuleInit();
 
     await backend.execute(buildTask({ requestId: 'req-xyz' }));
-    expect(kafkaMocks().sendMock.mock.calls[0][0].messages[0].key).toBe('req-xyz');
+    expect(kafkaMocks().sendMock.mock.calls[0][0].messages[0].key).toBe(
+      'req-xyz',
+    );
 
     await backend.execute(buildTask({ requestId: undefined, id: 99 }));
     expect(kafkaMocks().sendMock.mock.calls[1][0].messages[0].key).toBe('99');
@@ -222,7 +246,9 @@ describe('KafkaProducerBackend', () => {
   it('연결되지 않은 상태에서 execute 호출 시 오류', async () => {
     const backend = new KafkaProducerBackend(buildConfig({ enabled: false }));
     await backend.onModuleInit();
-    await expect(backend.execute(buildTask())).rejects.toThrow(/연결되지 않았습니다/);
+    await expect(backend.execute(buildTask())).rejects.toThrow(
+      /연결되지 않았습니다/,
+    );
   });
 
   it('onModuleDestroy 시 프로듀서 연결 해제', async () => {

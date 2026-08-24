@@ -3,7 +3,10 @@ import { QueueModule } from '../src/queue/queue.module';
 import { EngineRouterService } from '../src/queue/engine-router.service';
 import { KafkaProducerBackend } from '../src/queue/kafka-producer.backend';
 import { GoEngineClient } from '../src/queue/go-engine.client';
-import { DEFAULT_BROKERS, isKafkaAvailable } from './helpers/kafka-availability';
+import {
+  DEFAULT_BROKERS,
+  isKafkaAvailable,
+} from './helpers/kafka-availability';
 
 /**
  * QueueModule 부팅 시 KafkaProducerBackend 가 DI 로 정상 주입되고,
@@ -19,7 +22,9 @@ describe('QueueModule DI 통합 (Kafka 백엔드)', () => {
     available = await isKafkaAvailable(brokers);
     if (!available) {
       // eslint-disable-next-line no-console
-      console.warn(`[e2e] Kafka 브로커(${brokers.join(',')}) 미연결로 스위트 스킵`);
+      console.warn(
+        `[e2e] Kafka 브로커(${brokers.join(',')}) 미연결로 스위트 스킵`,
+      );
     }
   });
 

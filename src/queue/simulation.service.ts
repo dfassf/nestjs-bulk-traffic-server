@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class SimulationService {
-  simulateCPU(iterations: number): Promise<{ hash: string; iterations: number }> {
+  simulateCPU(
+    iterations: number,
+  ): Promise<{ hash: string; iterations: number }> {
     return new Promise((resolve) => {
       let hash = 0;
       for (let i = 0; i < iterations; i++) {
@@ -18,7 +20,9 @@ export class SimulationService {
     });
   }
 
-  simulateBatch(itemCount: number): Promise<{ processed: number; items: string[] }> {
+  simulateBatch(
+    itemCount: number,
+  ): Promise<{ processed: number; items: string[] }> {
     return new Promise((resolve) => {
       const items: string[] = [];
       let done = 0;

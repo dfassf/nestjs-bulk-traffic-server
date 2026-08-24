@@ -4,10 +4,7 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import {
-  QueueTask,
-  EnqueueOptions,
-} from './interfaces/queue-task.interface';
+import { QueueTask, EnqueueOptions } from './interfaces/queue-task.interface';
 import { MemoryService } from './memory.service';
 import { BatchService } from './batch.service';
 import { WorkerPoolService } from './worker-pool.service';
@@ -22,11 +19,23 @@ import { readPositiveIntEnv } from './utils/env';
 export class QueueService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(QueueService.name);
 
-  private readonly queueProcessIntervalMs = readPositiveIntEnv('QUEUE_PROCESS_INTERVAL_MS', 20);
+  private readonly queueProcessIntervalMs = readPositiveIntEnv(
+    'QUEUE_PROCESS_INTERVAL_MS',
+    20,
+  );
   private readonly batchAgingIntervalMs = 300;
-  private readonly memoryCheckIntervalMs = readPositiveIntEnv('QUEUE_MEMORY_CHECK_INTERVAL_MS', 3000);
-  private readonly statsLogIntervalMs = readPositiveIntEnv('QUEUE_STATS_LOG_INTERVAL_MS', 60000);
-  private readonly snapshotIntervalMs = readPositiveIntEnv('QUEUE_SNAPSHOT_INTERVAL_MS', 30000);
+  private readonly memoryCheckIntervalMs = readPositiveIntEnv(
+    'QUEUE_MEMORY_CHECK_INTERVAL_MS',
+    3000,
+  );
+  private readonly statsLogIntervalMs = readPositiveIntEnv(
+    'QUEUE_STATS_LOG_INTERVAL_MS',
+    60000,
+  );
+  private readonly snapshotIntervalMs = readPositiveIntEnv(
+    'QUEUE_SNAPSHOT_INTERVAL_MS',
+    30000,
+  );
 
   private queueProcessTimer: ReturnType<typeof setInterval> | null = null;
   private batchAgingTimer: ReturnType<typeof setInterval> | null = null;
@@ -60,7 +69,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       this.snapshotTimer = setInterval(() => {
         void this.saveSnapshot();
       }, this.snapshotIntervalMs);
-      this.logger.log(`큐 영속성 활성화 (스냅샷 주기: ${this.snapshotIntervalMs}ms)`);
+      this.logger.log(
+        `큐 영속성 활성화 (스냅샷 주기: ${this.snapshotIntervalMs}ms)`,
+      );
     }
 
     this.logger.log('큐 시스템 초기화 완료');
@@ -151,7 +162,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       totalProcessed: this.statsService.totalProcessed,
       totalRejected: this.statsService.totalRejected,
       totalTimeout: this.statsService.totalTimeout,
-      workloadGeneralQueueFallbackCount: this.optionsParser.workloadGeneralQueueFallbackCount,
+      workloadGeneralQueueFallbackCount:
+        this.optionsParser.workloadGeneralQueueFallbackCount,
       recentProcessed: recent.processed,
       recentRejected: recent.rejected,
       recentTimeout: recent.timeout,
@@ -159,7 +171,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       workerPool: this.workerPoolService.getPoolStats(),
       persistence: {
         enabled: this.snapshotManager.enabled,
-        snapshotIntervalMs: this.snapshotManager.enabled ? this.snapshotIntervalMs : null,
+        snapshotIntervalMs: this.snapshotManager.enabled
+          ? this.snapshotIntervalMs
+          : null,
         lastSnapshotAt: this.snapshotManager.lastSnapshotAt,
       },
     };
@@ -207,17 +221,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         },
       );
 
-      if (!this.memoryService.memoryPressure && this.state.lowPriorityQueue.length > 0) {
+      if (
+        !this.memoryService.memoryPressure &&
+        this.state.lowPriorityQueue.length > 0
+      ) {
         this.processor.requestProcessQueue();
       }
     }, this.memoryCheckIntervalMs);
 
     this.statsLogTimer = setInterval(
-      () => this.statsService.logStats(
-        this.state.activeRequests,
-        this.state.getTotalQueueLength(),
-        this.optionsParser.workloadGeneralQueueFallbackCount,
-      ),
+      () =>
+        this.statsService.logStats(
+          this.state.activeRequests,
+          this.state.getTotalQueueLength(),
+          this.optionsParser.workloadGeneralQueueFallbackCount,
+        ),
       this.statsLogIntervalMs,
     );
   }

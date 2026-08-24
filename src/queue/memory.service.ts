@@ -71,7 +71,9 @@ export class MemoryService {
         }
       }
 
-      this.logger.warn(`메모리 부족으로 저우선순위 작업 ${totalRejected}개 제거`);
+      this.logger.warn(
+        `메모리 부족으로 저우선순위 작업 ${totalRejected}개 제거`,
+      );
     }
 
     for (const [category, batch] of batchQueues.entries()) {

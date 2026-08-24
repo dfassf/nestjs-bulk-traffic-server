@@ -49,9 +49,7 @@ describe('validateEnv', () => {
       validateEnv({
         ALLOW_CUSTOM_WORKLOAD: '1',
       }),
-    ).toThrow(
-      'ALLOW_CUSTOM_WORKLOAD는 true 또는 false 문자열이어야 합니다.',
-    );
+    ).toThrow('ALLOW_CUSTOM_WORKLOAD는 true 또는 false 문자열이어야 합니다.');
   });
 
   it('QUEUE_PERSISTENCE 값이 file/none이 아니면 예외를 던져야 한다', () => {

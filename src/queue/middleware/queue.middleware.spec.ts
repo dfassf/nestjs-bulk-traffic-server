@@ -105,7 +105,8 @@ describe('QueueMiddleware', () => {
         expect.objectContaining({ timeout: 10000 }),
       );
     } finally {
-      if (original !== undefined) process.env.QUEUE_EXECUTION_TIMEOUT_MS = original;
+      if (original !== undefined)
+        process.env.QUEUE_EXECUTION_TIMEOUT_MS = original;
     }
   });
 
@@ -121,7 +122,10 @@ describe('QueueMiddleware', () => {
   });
 
   it('일반 요청은 큐에 등록 후 next를 호출해야 한다', async () => {
-    const req = createRequest({ path: '/api/user/profile', url: '/api/user/profile' });
+    const req = createRequest({
+      path: '/api/user/profile',
+      url: '/api/user/profile',
+    });
     const res = createResponse();
     const next: NextFunction = jest.fn(() => {
       setImmediate(() => res.emit('finish'));

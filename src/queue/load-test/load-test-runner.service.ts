@@ -94,7 +94,8 @@ export class LoadTestRunnerService {
     const results = await Promise.allSettled(tasks);
     return {
       total: count,
-      fulfilled: results.filter((result) => result.status === 'fulfilled').length,
+      fulfilled: results.filter((result) => result.status === 'fulfilled')
+        .length,
       rejected: results.filter((result) => result.status === 'rejected').length,
     };
   }
@@ -132,7 +133,9 @@ export class LoadTestRunnerService {
     const testType = body.type || 'cpu';
 
     const emit = (event: string, payload: Record<string, unknown>) => {
-      subject.next({ data: JSON.stringify({ event, ...payload }) } as MessageEvent);
+      subject.next({
+        data: JSON.stringify({ event, ...payload }),
+      } as MessageEvent);
     };
 
     const run = async () => {
@@ -213,26 +216,35 @@ export class LoadTestRunnerService {
         const rand = Math.random();
 
         if (rand < cpuRatio) {
-          return this.queueService.enqueue(() => this.simulation.simulateCPU(500), {
-            priority: 0,
-            workloadType: WorkloadType.CPU,
-            params: { iterations: 500 },
-          });
+          return this.queueService.enqueue(
+            () => this.simulation.simulateCPU(500),
+            {
+              priority: 0,
+              workloadType: WorkloadType.CPU,
+              params: { iterations: 500 },
+            },
+          );
         }
 
         if (rand < cpuRatio + ioRatio) {
-          return this.queueService.enqueue(() => this.simulation.simulateIO(50), {
-            priority: 0,
-            params: { delay_ms: 50 },
-          });
+          return this.queueService.enqueue(
+            () => this.simulation.simulateIO(50),
+            {
+              priority: 0,
+              params: { delay_ms: 50 },
+            },
+          );
         }
 
-        return this.queueService.enqueue(() => this.simulation.simulateBatch(5), {
-          priority: -5,
-          params: { item_count: 5 },
-          batch: true,
-          category: 'load-test-batch',
-        });
+        return this.queueService.enqueue(
+          () => this.simulation.simulateBatch(5),
+          {
+            priority: -5,
+            params: { item_count: 5 },
+            batch: true,
+            category: 'load-test-batch',
+          },
+        );
       }
     }
   }

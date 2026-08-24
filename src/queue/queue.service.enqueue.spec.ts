@@ -164,7 +164,8 @@ describe('QueueService enqueue', () => {
         }),
       { timeout: 10 },
     );
-    const assertion = expect(promise).rejects.toThrow('작업 실행 시간 초과 (10ms)');
+    const assertion =
+      expect(promise).rejects.toThrow('작업 실행 시간 초과 (10ms)');
 
     processor.processQueue();
     await jest.advanceTimersByTimeAsync(20);
@@ -226,7 +227,9 @@ describe('QueueService enqueue', () => {
     }).compile();
 
     const enabledService = module.get<QueueService>(QueueService);
-    const enabledProcessor = module.get<QueueProcessorService>(QueueProcessorService);
+    const enabledProcessor = module.get<QueueProcessorService>(
+      QueueProcessorService,
+    );
     const promise = enabledService.enqueue(() => Promise.resolve('ok'), {
       workloadType: WorkloadType.CUSTOM,
       functionCode: 'return 1;',

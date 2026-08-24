@@ -3,7 +3,10 @@ import { QueueTask } from './interfaces/queue-task.interface';
 import { GoEngineClient, GoEngineResult } from './go-engine.client';
 import { GoEngineBackend } from './go-engine.backend';
 import { KafkaProducerBackend } from './kafka-producer.backend';
-import { WorkerBackend, WorkerBackendResult } from './interfaces/worker-backend.interface';
+import {
+  WorkerBackend,
+  WorkerBackendResult,
+} from './interfaces/worker-backend.interface';
 import { readWorkerEngineEnv, WorkerEngine } from './utils/env';
 
 export { WorkerEngine };

@@ -84,7 +84,9 @@ export function validateEnv(config: EnvMap): EnvMap {
   //   오타   -> 조용히 node 로 떨어뜨리지 않고 부팅에서 막는다
   const workerEngine = config.WORKER_ENGINE;
   const workerEngineSet =
-    workerEngine !== undefined && workerEngine !== null && String(workerEngine).trim() !== '';
+    workerEngine !== undefined &&
+    workerEngine !== null &&
+    String(workerEngine).trim() !== '';
 
   if (workerEngineSet && parseWorkerEngine(String(workerEngine)) === null) {
     throw new Error(
@@ -102,7 +104,10 @@ export function validateEnv(config: EnvMap): EnvMap {
     // 기본값으로 대신하면 의도하지 않은 브로커에 붙을 수 있다.
     const parsedBrokers =
       typeof brokers === 'string'
-        ? brokers.split(',').map((s) => s.trim()).filter(Boolean)
+        ? brokers
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
         : [];
     if (parsedBrokers.length === 0) {
       throw new Error(

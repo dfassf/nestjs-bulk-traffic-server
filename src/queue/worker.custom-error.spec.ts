@@ -42,7 +42,12 @@ describe('worker.js custom 실행기', () => {
 
   it('기능이 꺼져 있으면 실패로 보고한다', async () => {
     const res = await runCustomTask(
-      { type: 'custom', operation: 'execute', params: {}, functionCode: 'return 1;' },
+      {
+        type: 'custom',
+        operation: 'execute',
+        params: {},
+        functionCode: 'return 1;',
+      },
       { ALLOW_CUSTOM_WORKLOAD: 'false' },
     );
 

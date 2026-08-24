@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { QueueTask } from './interfaces/queue-task.interface';
-import { WorkerBackend, WorkerBackendResult } from './interfaces/worker-backend.interface';
+import {
+  WorkerBackend,
+  WorkerBackendResult,
+} from './interfaces/worker-backend.interface';
 import { GoEngineClient } from './go-engine.client';
 
 /**

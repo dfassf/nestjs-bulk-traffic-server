@@ -18,7 +18,8 @@ export class QueueSnapshotManager {
 
   constructor(
     private readonly statsService: QueueStatsService,
-    @Optional() @Inject(QUEUE_PERSISTENCE)
+    @Optional()
+    @Inject(QUEUE_PERSISTENCE)
     private readonly queuePersistence: QueuePersistence | null,
   ) {}
 
@@ -92,7 +93,9 @@ export class QueueSnapshotManager {
       try {
         await this.queuePersistence.clearSnapshot();
       } catch (error) {
-        this.logger.warn(`복구된 큐 스냅샷 정리 실패: ${toErrorMessage(error)}`);
+        this.logger.warn(
+          `복구된 큐 스냅샷 정리 실패: ${toErrorMessage(error)}`,
+        );
       }
 
       return { taskIdCounter: snapshot.stats.taskIdCounter };

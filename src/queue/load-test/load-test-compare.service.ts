@@ -17,7 +17,10 @@ export interface CompareRound {
 }
 
 /** 라운드 목록에서 한쪽 엔진의 실측 지연만 추린다(측정 못 한 라운드는 제외). */
-function pickLatencies(rounds: CompareRound[], key: 'nodeMs' | 'goMs'): number[] {
+function pickLatencies(
+  rounds: CompareRound[],
+  key: 'nodeMs' | 'goMs',
+): number[] {
   return rounds.map((r) => r[key]).filter((ms): ms is number => ms !== null);
 }
 
@@ -100,7 +103,9 @@ export class LoadTestCompareService {
     const delayMs = body.delayMs || 100;
 
     const emit = (event: string, payload: Record<string, unknown>) => {
-      subject.next({ data: JSON.stringify({ event, ...payload }) } as MessageEvent);
+      subject.next({
+        data: JSON.stringify({ event, ...payload }),
+      } as MessageEvent);
     };
 
     const run = async () => {
@@ -115,7 +120,9 @@ export class LoadTestCompareService {
       });
 
       if (engineMode !== 'both') {
-        emit('error', { message: 'WORKER_ENGINE=both 모드에서만 사용 가능합니다.' });
+        emit('error', {
+          message: 'WORKER_ENGINE=both 모드에서만 사용 가능합니다.',
+        });
         subject.complete();
         return;
       }
@@ -137,7 +144,13 @@ export class LoadTestCompareService {
 
             const goStart = performance.now();
             await this.engineRouter.dispatchToGo(
-              this.createGoTask(i, 'io', { delay_ms: delayMs }, 60000, 'compare-io-go'),
+              this.createGoTask(
+                i,
+                'io',
+                { delay_ms: delayMs },
+                60000,
+                'compare-io-go',
+              ),
             );
             goMs = Math.round((performance.now() - goStart) * 100) / 100;
           } else {
@@ -191,7 +204,9 @@ export class LoadTestCompareService {
       const valid = results.filter((result) => result.winner !== 'error');
 
       const taskLabel =
-        testType === 'io' ? `asyncIO(delay=${delayMs}ms)` : `findPrimes(max=${max})`;
+        testType === 'io'
+          ? `asyncIO(delay=${delayMs}ms)`
+          : `findPrimes(max=${max})`;
 
       emit('done', {
         total: count,

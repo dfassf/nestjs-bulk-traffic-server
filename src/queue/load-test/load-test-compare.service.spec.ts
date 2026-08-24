@@ -16,7 +16,11 @@ describe('LoadTestCompareService.compareEngines', () => {
       dispatchToGo: jest.fn(),
     } as unknown as EngineRouterService;
     simulation = {} as unknown as SimulationService;
-    service = new LoadTestCompareService(queueService, engineRouter, simulation);
+    service = new LoadTestCompareService(
+      queueService,
+      engineRouter,
+      simulation,
+    );
   });
 
   it('both 모드가 아니면 안내를 돌려준다', async () => {
@@ -27,7 +31,9 @@ describe('LoadTestCompareService.compareEngines', () => {
 
   it('정상 비교에서는 양쪽 평균이 숫자로 나온다', async () => {
     (queueService.enqueue as jest.Mock).mockResolvedValue(undefined);
-    (engineRouter.dispatchToGo as jest.Mock).mockResolvedValue({ success: true });
+    (engineRouter.dispatchToGo as jest.Mock).mockResolvedValue({
+      success: true,
+    });
 
     const res: any = await service.compareEngines({ count: 3 });
 
@@ -57,7 +63,9 @@ describe('LoadTestCompareService.compareEngines', () => {
 
   it('실패 라운드의 지연은 0 이 아니라 null 로 기록된다', async () => {
     (queueService.enqueue as jest.Mock).mockResolvedValue(undefined);
-    (engineRouter.dispatchToGo as jest.Mock).mockRejectedValue(new Error('실패'));
+    (engineRouter.dispatchToGo as jest.Mock).mockRejectedValue(
+      new Error('실패'),
+    );
 
     const res: any = await service.compareEngines({ count: 2 });
 

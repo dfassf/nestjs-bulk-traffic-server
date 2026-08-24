@@ -10,10 +10,19 @@ export class QueueStateHolder {
   readonly batchQueues: Map<string, TaskBatch> = new Map();
 
   readonly concurrentTasks = readPositiveIntEnv('QUEUE_CONCURRENT_TASKS', 50);
-  readonly maxConcurrentRequests = readPositiveIntEnv('QUEUE_MAX_CONCURRENT_REQUESTS', 200);
+  readonly maxConcurrentRequests = readPositiveIntEnv(
+    'QUEUE_MAX_CONCURRENT_REQUESTS',
+    200,
+  );
   readonly taskTimeoutMs = readPositiveIntEnv('QUEUE_TASK_TIMEOUT_MS', 15000);
-  readonly executionTimeoutMs = readPositiveIntEnv('QUEUE_EXECUTION_TIMEOUT_MS', 10000);
-  readonly queueOverflowThreshold = readPositiveIntEnv('QUEUE_OVERFLOW_THRESHOLD', 3000);
+  readonly executionTimeoutMs = readPositiveIntEnv(
+    'QUEUE_EXECUTION_TIMEOUT_MS',
+    10000,
+  );
+  readonly queueOverflowThreshold = readPositiveIntEnv(
+    'QUEUE_OVERFLOW_THRESHOLD',
+    3000,
+  );
 
   taskIdCounter = 0;
   activeRequests = 0;
@@ -21,7 +30,11 @@ export class QueueStateHolder {
   processSignalPending = false;
 
   get allQueues(): QueueTask[][] {
-    return [this.highPriorityQueue, this.normalPriorityQueue, this.lowPriorityQueue];
+    return [
+      this.highPriorityQueue,
+      this.normalPriorityQueue,
+      this.lowPriorityQueue,
+    ];
   }
 
   getBatchTaskCount(): number {

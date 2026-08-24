@@ -55,10 +55,7 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
 
-  const threadPoolSize = configService.get<string>(
-    'UV_THREADPOOL_SIZE',
-    '64',
-  );
+  const threadPoolSize = configService.get<string>('UV_THREADPOOL_SIZE', '64');
   process.env.UV_THREADPOOL_SIZE = threadPoolSize;
   logger.log(`libuv 스레드풀 크기 설정: ${threadPoolSize}`);
 
@@ -80,9 +77,7 @@ async function bootstrap() {
     );
 
     if (usageRatio > 0.85) {
-      logger.warn(
-        `높은 메모리 사용량 감지: ${Math.round(usageRatio * 100)}%`,
-      );
+      logger.warn(`높은 메모리 사용량 감지: ${Math.round(usageRatio * 100)}%`);
     }
   }, 30000);
 

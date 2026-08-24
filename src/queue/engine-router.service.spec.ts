@@ -9,7 +9,11 @@ describe('EngineRouterService', () => {
   let kafkaProducerBackend: KafkaProducerBackend;
 
   const buildRouter = () =>
-    new EngineRouterService(goEngineClient, goEngineBackend, kafkaProducerBackend);
+    new EngineRouterService(
+      goEngineClient,
+      goEngineBackend,
+      kafkaProducerBackend,
+    );
 
   beforeEach(() => {
     goEngineClient = {
@@ -34,10 +38,13 @@ describe('EngineRouterService', () => {
     expect(buildRouter().getEngine()).toBe('node');
   });
 
-  it.each(['go', 'both', 'kafka'])('WORKER_ENGINE=%s 를 그대로 쓴다', (engine) => {
-    process.env.WORKER_ENGINE = engine;
-    expect(buildRouter().getEngine()).toBe(engine);
-  });
+  it.each(['go', 'both', 'kafka'])(
+    'WORKER_ENGINE=%s 를 그대로 쓴다',
+    (engine) => {
+      process.env.WORKER_ENGINE = engine;
+      expect(buildRouter().getEngine()).toBe(engine);
+    },
+  );
 
   it('대소문자·공백이 섞여도 같은 엔진으로 해석한다', () => {
     process.env.WORKER_ENGINE = ' Kafka ';

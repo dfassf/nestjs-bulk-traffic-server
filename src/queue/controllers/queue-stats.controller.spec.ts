@@ -27,7 +27,11 @@ describe('QueueStatsController', () => {
       getStats: jest.fn(),
     } as unknown as GoEngineClient;
 
-    controller = new QueueStatsController(queueService, engineRouter, goEngineClient);
+    controller = new QueueStatsController(
+      queueService,
+      engineRouter,
+      goEngineClient,
+    );
   });
 
   describe('queue-stats', () => {

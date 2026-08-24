@@ -1,6 +1,10 @@
 import { BenchDriver, BenchResult } from './bench-driver.interface';
 import { Pool } from 'pg';
-import { readPositiveIntEnv, requireEnv, requirePositiveIntEnv } from './utils/env';
+import {
+  readPositiveIntEnv,
+  requireEnv,
+  requirePositiveIntEnv,
+} from './utils/env';
 
 export class PgBenchDriver implements BenchDriver {
   private pool: Pool;
@@ -42,7 +46,8 @@ export class PgBenchDriver implements BenchDriver {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const stmt = 'INSERT INTO bench_records (key, value, created_at) VALUES ($1, $2, $3)';
+      const stmt =
+        'INSERT INTO bench_records (key, value, created_at) VALUES ($1, $2, $3)';
       for (let i = 0; i < count; i++) {
         await client.query(stmt, [
           `key-${Date.now()}-${i}`,
@@ -69,10 +74,18 @@ export class PgBenchDriver implements BenchDriver {
   }
 
   async benchRead(count: number): Promise<BenchResult> {
-    const res = await this.pool.query('SELECT COUNT(*) as cnt FROM bench_records');
+    const res = await this.pool.query(
+      'SELECT COUNT(*) as cnt FROM bench_records',
+    );
     const totalRows = parseInt(res.rows[0].cnt);
     if (totalRows === 0) {
-      return { operation: 'read', count: 0, totalMs: 0, avgMs: 0, opsPerSec: 0 };
+      return {
+        operation: 'read',
+        count: 0,
+        totalMs: 0,
+        avgMs: 0,
+        opsPerSec: 0,
+      };
     }
 
     const start = performance.now();
@@ -83,10 +96,9 @@ export class PgBenchDriver implements BenchDriver {
           [Math.min(50, totalRows)],
         );
       } else {
-        await this.pool.query(
-          'SELECT * FROM bench_records WHERE key = $1',
-          [`key-nonexistent-${i}`],
-        );
+        await this.pool.query('SELECT * FROM bench_records WHERE key = $1', [
+          `key-nonexistent-${i}`,
+        ]);
       }
     }
     const totalMs = performance.now() - start;
@@ -101,7 +113,9 @@ export class PgBenchDriver implements BenchDriver {
   }
 
   async getRowCount(): Promise<number> {
-    const res = await this.pool.query('SELECT COUNT(*) as cnt FROM bench_records');
+    const res = await this.pool.query(
+      'SELECT COUNT(*) as cnt FROM bench_records',
+    );
     return parseInt(res.rows[0].cnt);
   }
 

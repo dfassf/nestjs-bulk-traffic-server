@@ -1,4 +1,5 @@
 import * as path from 'path';
+import Database from 'better-sqlite3';
 import {
   Order,
   OrderEventRecord,
@@ -7,9 +8,6 @@ import {
   OrderStatus,
 } from './order-events';
 import { DuplicateEventSummary, OrderStore } from './order-store.interface';
-
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const Database = require('better-sqlite3');
 
 interface OrderRow {
   order_id: string;
@@ -32,6 +30,18 @@ interface EventRow {
   consumed_at: number;
 }
 
+/** 같은 주문·이벤트가 몇 번 처리됐는지 세는 집계 결과. */
+interface DuplicateRow {
+  order_id: string;
+  event_type: string;
+  cnt: number;
+}
+
+/** COUNT(*) 한 개만 돌려주는 집계 결과. */
+interface CountRow {
+  cnt: number;
+}
+
 /**
  * 파일이 아니라 메모리에 두라는 뜻의 특수 경로.
  *
@@ -48,7 +58,7 @@ const IN_MEMORY_PATH = ':memory:';
  * 벤치마크 DB 와 파일을 분리해서 실험을 초기화해도 벤치 결과가 안 날아가게 한다.
  */
 export class SqliteOrderStore implements OrderStore {
-  private db: any;
+  private db: Database.Database;
   private readonly dbPath: string;
 
   constructor(dbPath?: string) {
@@ -125,8 +135,8 @@ export class SqliteOrderStore implements OrderStore {
   }
 
   async findOrder(orderId: string): Promise<Order | null> {
-    const row: OrderRow | undefined = this.db
-      .prepare('SELECT * FROM orders WHERE order_id = ?')
+    const row = this.db
+      .prepare<[string], OrderRow>('SELECT * FROM orders WHERE order_id = ?')
       .get(orderId);
 
     return row ? this.toOrder(row) : null;
@@ -168,28 +178,31 @@ export class SqliteOrderStore implements OrderStore {
   async findEvents(orderId?: string, limit = 200): Promise<OrderEventRecord[]> {
     const rows: EventRow[] = orderId
       ? this.db
-          .prepare(
-            'SELECT * FROM order_events WHERE order_id = ? ORDER BY consumed_at ASC, id ASC LIMIT ?',
-          )
+          .prepare<
+            [string, number],
+            EventRow
+          >('SELECT * FROM order_events WHERE order_id = ? ORDER BY consumed_at ASC, id ASC LIMIT ?')
           .all(orderId, limit)
       : this.db
-          .prepare('SELECT * FROM order_events ORDER BY id DESC LIMIT ?')
+          .prepare<
+            [number],
+            EventRow
+          >('SELECT * FROM order_events ORDER BY id DESC LIMIT ?')
           .all(limit);
 
     return rows.map((row) => this.toEventRecord(row));
   }
 
   async findDuplicates(): Promise<DuplicateEventSummary[]> {
-    const rows: { order_id: string; event_type: string; cnt: number }[] =
-      this.db
-        .prepare(
-          `SELECT order_id, event_type, COUNT(*) AS cnt
+    const rows = this.db
+      .prepare<[], DuplicateRow>(
+        `SELECT order_id, event_type, COUNT(*) AS cnt
          FROM order_events
          GROUP BY order_id, event_type
          HAVING COUNT(*) > 1
          ORDER BY cnt DESC`,
-        )
-        .all();
+      )
+      .all();
 
     return rows.map((row) => ({
       orderId: row.order_id,
@@ -199,16 +212,24 @@ export class SqliteOrderStore implements OrderStore {
   }
 
   async countOrders(): Promise<number> {
-    const row: { cnt: number } = this.db
-      .prepare('SELECT COUNT(*) AS cnt FROM orders')
-      .get();
-    return row.cnt;
+    return this.count('SELECT COUNT(*) AS cnt FROM orders');
   }
 
   async countEvents(): Promise<number> {
-    const row: { cnt: number } = this.db
-      .prepare('SELECT COUNT(*) AS cnt FROM order_events')
-      .get();
+    return this.count('SELECT COUNT(*) AS cnt FROM order_events');
+  }
+
+  /**
+   * COUNT(*) 한 개를 읽는다.
+   *
+   * COUNT 는 항상 한 행을 돌려주므로 결과가 비면 쿼리가 잘못된 것이다.
+   * 0 으로 대신하면 "정말 0건" 과 "쿼리가 틀림" 이 구분되지 않는다.
+   */
+  private count(sql: string): number {
+    const row = this.db.prepare<[], CountRow>(sql).get();
+    if (!row) {
+      throw new Error(`건수를 읽지 못했습니다: ${sql}`);
+    }
     return row.cnt;
   }
 

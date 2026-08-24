@@ -1,9 +1,5 @@
 import { Injectable, Inject, Logger, Optional } from '@nestjs/common';
-import {
-  QueueTask,
-  SerializedTask,
-  QueueSnapshot,
-} from './interfaces/queue-task.interface';
+import { QueueTask, SerializedTask } from './interfaces/queue-task.interface';
 import { QueueStatsService } from './queue-stats.service';
 import {
   QUEUE_PERSISTENCE,

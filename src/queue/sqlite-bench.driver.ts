@@ -1,11 +1,14 @@
 import * as path from 'path';
+import Database from 'better-sqlite3';
 import { BenchDriver, BenchResult } from './bench-driver.interface';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const Database = require('better-sqlite3');
+/** COUNT(*) 한 개만 돌려주는 집계 결과. */
+interface CountRow {
+  cnt: number;
+}
 
 export class SqliteBenchDriver implements BenchDriver {
-  private db: any;
+  private db: Database.Database;
   private readonly dbPath: string;
 
   constructor() {
@@ -60,10 +63,8 @@ export class SqliteBenchDriver implements BenchDriver {
   }
 
   async benchRead(count: number): Promise<BenchResult> {
-    const totalRows = this.db
-      .prepare('SELECT COUNT(*) as cnt FROM bench_records')
-      .get();
-    if (totalRows.cnt === 0) {
+    const totalRows = this.readRowCount();
+    if (totalRows === 0) {
       return {
         operation: 'read',
         count: 0,
@@ -83,7 +84,7 @@ export class SqliteBenchDriver implements BenchDriver {
     const start = performance.now();
     for (let i = 0; i < count; i++) {
       if (i % 2 === 0) {
-        selectRange.all(Math.min(50, totalRows.cnt));
+        selectRange.all(Math.min(50, totalRows));
       } else {
         selectByKey.all(`key-nonexistent-${i}`);
       }
@@ -100,8 +101,23 @@ export class SqliteBenchDriver implements BenchDriver {
   }
 
   async getRowCount(): Promise<number> {
-    return this.db.prepare('SELECT COUNT(*) as cnt FROM bench_records').get()
-      .cnt;
+    return this.readRowCount();
+  }
+
+  /**
+   * 적재된 행 수를 읽는다.
+   *
+   * COUNT 는 항상 한 행을 돌려주므로 결과가 비면 쿼리가 잘못된 것이다.
+   * 0 으로 대신하면 "정말 0건" 과 "쿼리가 틀림" 이 구분되지 않는다.
+   */
+  private readRowCount(): number {
+    const row = this.db
+      .prepare<[], CountRow>('SELECT COUNT(*) as cnt FROM bench_records')
+      .get();
+    if (!row) {
+      throw new Error('벤치 테이블 건수를 읽지 못했습니다.');
+    }
+    return row.cnt;
   }
 
   async reset(): Promise<void> {

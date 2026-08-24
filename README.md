@@ -89,6 +89,99 @@ flowchart TD
 
 메시지 키는 `requestId`(없으면 `taskId`)를 씁니다. 같은 키는 같은 파티션으로 가서 순서가 보장됩니다.
 
+## 카프카 실험용 주문 도메인
+
+카프카가 어떤 상황에서 어떻게 동작하는지 관찰하려고 둔 소재입니다. 실제 이커머스 서비스가 아닙니다. 배경과 실험 목록은 [docs/kafka-lab-plan.md](docs/kafka-lab-plan.md)에 있습니다.
+
+```
+POST   /orders             주문 생성 (orders.created 발행)
+POST   /orders/bulk        대량 생성 (부하용, count·delayMs)
+GET    /orders/stats       주문·이벤트 수, 중복 건수, 프로듀서 설정
+GET    /orders/events      이벤트 소비 기록 (파티션·오프셋 포함)
+GET    /orders/duplicates  중복 처리 집계
+GET    /orders/:orderId    주문 상태
+DELETE /orders             기록 초기화
+```
+
+### 토픽은 앱이 만듭니다
+
+브로커의 자동 생성은 꺼져 있습니다(`KAFKA_AUTO_CREATE_TOPICS_ENABLE=false`). 켜두면 없는 토픽에 발행할 때 **파티션 1개짜리가 조용히 만들어집니다.** 발행은 정상으로 보이는데 파티션이 1개라 키 라우팅·순서·컨슈머 분배 실험이 전부 성립하지 않습니다.
+
+부팅할 때 `ORDER_TOPIC_PARTITIONS`(기본 6) 개수로 네 토픽을 만듭니다. 이미 있는 토픽의 파티션이 모자라면 경고만 남기고 자동으로 늘리지 않습니다. 파티션을 늘리면 같은 키가 다른 파티션으로 가서 기존 순서 보장이 깨지기 때문입니다.
+
+### 컨슈머
+
+서버와 별도 프로세스로 띄웁니다.
+
+```bash
+npm run consumer                              # 컨슈머 1개
+CONSUMER_COUNT=3 npm run consumer             # 한 프로세스에 3개
+CONSUMER_DELAY_MS=500 npm run consumer        # 일부러 느리게 (Lag 쌓기)
+```
+
+별도 프로세스인 이유는 강제 종료 실험 때문입니다. `disconnect()`는 정상 종료라 카프카에 나간다고 알리고 오프셋도 커밋하고 빠져서 중복이 안 생깁니다. 실무에서 중복이 생기는 건 프로세스가 갑자기 죽어 커밋을 놓친 경우이고, 그건 `kill -9`로만 재현됩니다.
+
+오프셋은 수동으로 커밋합니다. 자동 커밋은 백그라운드에서 알아서 커밋해버려 시점을 제어할 수 없는데, 중복·유실 실험은 커밋 시점이 전부입니다.
+
+### 실험용 스위치
+
+평소에는 건드리지 않는 값들입니다.
+
+**프로듀서**
+
+| 환경변수 | 용도 |
+|---|---|
+| `ORDER_PRODUCER_IDEMPOTENT=false` | 프로듀서 재시도로 생기는 브로커 중복 관찰 |
+| `ORDER_PRODUCER_ACKS` | 몇 개 복제본이 받아야 성공으로 볼지 (멱등성 끈 경우만) |
+| `ORDER_PRODUCER_DISABLE_KEY=true` | 키 없이 발행해 파티션이 흩어지는 것 관찰 |
+
+**컨슈머**
+
+| 환경변수 | 용도 |
+|---|---|
+| `CONSUMER_COUNT` | 이 프로세스의 컨슈머 개수. 파티션 분배 관찰 |
+| `CONSUMER_DELAY_MS` | 처리 속도를 늦춰 Lag 쌓기 |
+| `CONSUMER_COMMIT_MODE` | `after-process`(중복 감수) / `before-process`(유실 감수) |
+| `CONSUMER_COMMIT_DELAY_MS` | 처리와 커밋 사이 창을 넓혀 중복 재현 |
+| `CONSUMER_GROUP_ID` | 그룹을 나눠 같은 이벤트를 여러 곳에서 소비 |
+| `CONSUMER_FROM_BEGINNING=true` | 처음부터 다시 읽기 |
+| `CONSUMER_CRASH_AFTER` | 지정 건수 후 커밋 없이 강제 종료 |
+
+### 실험 조작판
+
+대시보드(`http://localhost:3000`)의 **카프카 실험** 탭에서 버튼으로 조작합니다.
+
+- 주문 발행 (건수·간격)
+- 컨슈머 띄우기 (인스턴스 수, 처리 지연, 커밋 시점, N건 후 강제 종료)
+- 컨슈머 강제 종료 / 정상 종료
+- 밀린 건수 실시간 그래프, 파티션별 분포
+- 오프셋 되감기
+
+API 로도 조작할 수 있습니다.
+
+```
+POST   /lab/consumers          컨슈머 프로세스 시작
+GET    /lab/consumers          실행 중인 컨슈머 목록
+DELETE /lab/consumers?pid=&signal=   종료 (SIGKILL / SIGTERM)
+GET    /lab/topics             토픽별 파티션·메시지 수
+GET    /lab/lag?groupId=       그룹 상태와 밀린 건수
+POST   /lab/offsets/reset      오프셋 되감기
+```
+
+서버가 컨슈머 프로세스를 띄우지만 실행 대상은 `dist/consumer.js` 하나로 고정되어 있고, 인자는 환경변수로만 넘기며 값도 전부 검증합니다. 셸을 거치지 않아 명령 주입이 불가능합니다.
+
+### 실측 예시
+
+파티션 6개, 컨슈머 3개로 주문 30건을 흘린 결과입니다.
+
+```
+컨슈머 0: 파티션 0, 1  →  10건
+컨슈머 1: 파티션 2, 3  →  11건
+컨슈머 2: 파티션 4, 5  →   9건
+```
+
+컨슈머를 8개로 늘리면 **6개만 일하고 2개는 놉니다.** 파티션 수가 병렬성의 상한이라 서버를 늘려도 처리량이 안 늘어나는 지점이 생깁니다.
+
 ## 엔드포인트
 - `GET /health`
   - 프로세스/메모리/시스템 상태 반환

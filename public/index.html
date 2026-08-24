@@ -15,6 +15,7 @@
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="perf">부하 테스트</button>
       <button class="tab-btn" data-tab="compare">Node vs Go</button>
+      <button class="tab-btn" data-tab="kafka">카프카 실험</button>
     </div>
     <div class="status">
       <div class="status-dot" id="statusDot"></div>
@@ -171,9 +172,97 @@
   </div>
 </div>
 
+<!-- ==================== TAB 3: 카프카 실험 ==================== -->
+<div class="tab-panel container" id="panel-kafka" style="grid-template-columns: 340px 1fr;">
+  <div class="sidebar">
+    <div>
+      <div class="section-title">주문 발행</div>
+      <div class="param-group">
+        <div class="param-row"><label>건수</label><input type="number" id="kfOrderCount" value="100" min="1" max="10000"></div>
+        <div class="param-row"><label>건당 간격 (ms)</label><input type="number" id="kfOrderDelay" value="0" min="0"></div>
+      </div>
+      <button class="run-btn" id="kfPublishBtn">주문 발행</button>
+    </div>
+
+    <div>
+      <div class="section-title">컨슈머</div>
+      <div class="param-group">
+        <div class="param-row"><label>그룹</label><input type="text" id="kfGroupId" value="order-processor"></div>
+        <div class="param-row"><label>인스턴스</label><input type="number" id="kfInstances" value="1" min="1" max="20"></div>
+        <div class="param-row"><label>처리 지연 (ms)</label><input type="number" id="kfDelay" value="0" min="0" max="60000"></div>
+        <div class="param-row"><label>커밋 시점</label>
+          <select id="kfCommitMode">
+            <option value="after-process">처리 후</option>
+            <option value="before-process">처리 전</option>
+          </select>
+        </div>
+        <div class="param-row"><label>커밋 지연 (ms)</label><input type="number" id="kfCommitDelay" value="0" min="0" max="60000"></div>
+        <div class="param-row"><label>N건 후 종료</label><input type="number" id="kfCrashAfter" value="0" min="0"></div>
+        <div class="param-row"><label>처음부터 읽기</label><input type="checkbox" id="kfFromBeginning"></div>
+      </div>
+      <button class="run-btn" id="kfSpawnBtn">컨슈머 시작</button>
+      <button class="run-btn" id="kfStopAllBtn" style="margin-top:8px;background:var(--bg-soft);">전부 정상 종료</button>
+    </div>
+
+    <div>
+      <div class="section-title">오프셋 되감기</div>
+      <div class="param-group">
+        <div class="param-row"><label>토픽</label>
+          <select id="kfResetTopic">
+            <option value="orders.created">orders.created</option>
+            <option value="inventory.reserved">inventory.reserved</option>
+            <option value="payments.approved">payments.approved</option>
+            <option value="shipments.started">shipments.started</option>
+          </select>
+        </div>
+        <div class="param-row"><label>위치</label>
+          <select id="kfResetTarget">
+            <option value="earliest">처음으로</option>
+            <option value="latest">최신으로</option>
+          </select>
+        </div>
+      </div>
+      <button class="run-btn" id="kfResetBtn" style="background:var(--bg-soft);">되감기</button>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px;line-height:1.6;">컨슈머가 전부 멈춰 있어야 됩니다.</div>
+    </div>
+
+    <div style="flex:1"></div>
+    <div>
+      <div class="section-title">기록</div>
+      <button class="run-btn" id="kfClearOrdersBtn" style="background:var(--bg-soft);">주문·이벤트 비우기</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="label">주문</div><div class="value" id="kfStatOrders">0</div></div>
+      <div class="stat-card"><div class="label">처리된 이벤트</div><div class="value" id="kfStatEvents">0</div></div>
+      <div class="stat-card"><div class="label">중복 처리</div><div class="value" style="color:var(--orange);" id="kfStatDuplicates">0</div></div>
+      <div class="stat-card"><div class="label">밀린 건수</div><div class="value" style="color:var(--red);" id="kfStatLag">0</div></div>
+    </div>
+
+    <div class="charts-row">
+      <div class="chart-card"><h3>밀린 건수 추이<span class="chart-subtitle">↑ 높을수록 처리가 밀림</span></h3><div class="chart-wrap"><canvas id="kfLagChart"></canvas></div></div>
+      <div class="chart-card"><h3>파티션별 밀린 건수</h3><div class="chart-wrap"><canvas id="kfPartitionChart"></canvas></div></div>
+    </div>
+
+    <div class="chart-card">
+      <h3>컨슈머 프로세스</h3>
+      <table class="history-table">
+        <thead><tr><th>PID</th><th>그룹</th><th>인스턴스</th><th>설정</th><th>상태</th><th>조작</th></tr></thead>
+        <tbody id="kfProcessBody"></tbody>
+      </table>
+      <div class="empty-state" id="kfProcessEmpty">실행 중인 컨슈머가 없습니다</div>
+    </div>
+
+    <div class="log-card"><h3>실시간 로그</h3><div class="log-area" id="kfLogArea"><div class="log-line log-info">주문을 발행하고 컨슈머를 띄워보세요.</div></div></div>
+  </div>
+</div>
+
 <script src="js/common.js"></script>
 <script src="js/perf-tab.js"></script>
 <script src="js/compare-tab.js"></script>
+<script src="js/kafka-tab.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

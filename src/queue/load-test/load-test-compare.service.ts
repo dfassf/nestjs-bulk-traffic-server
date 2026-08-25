@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { Observable, Subject } from 'rxjs';
+import { Observable } from 'rxjs';
 import { EngineRouterService } from '../engine-router.service';
 import { WorkloadType } from '../interfaces/queue-task.interface';
 import { QueueService } from '../queue.service';
 import { SimulationService } from '../simulation.service';
 import { summarizeLatencies } from './load-test-metrics.util';
+import { createEventStream } from './sse-stream.util';
 
 /**
  * 엔진 비교 한 라운드의 결과.
@@ -22,6 +23,19 @@ function pickLatencies(
   key: 'nodeMs' | 'goMs',
 ): number[] {
   return rounds.map((r) => r[key]).filter((ms): ms is number => ms !== null);
+}
+
+/** 승패·실패 건수를 센다. 진행 중 보고와 최종 집계가 같은 기준을 쓰게 한 곳에 둔다. */
+function countWinners(rounds: CompareRound[]): {
+  nodeWins: number;
+  goWins: number;
+  errors: number;
+} {
+  return {
+    nodeWins: rounds.filter((round) => round.winner === 'node').length,
+    goWins: rounds.filter((round) => round.winner === 'go').length,
+    errors: rounds.filter((round) => round.winner === 'error').length,
+  };
 }
 
 @Injectable()
@@ -96,19 +110,12 @@ export class LoadTestCompareService {
     testType?: 'cpu' | 'io';
     delayMs?: number;
   }): Observable<MessageEvent> {
-    const subject = new Subject<MessageEvent>();
     const count = Math.min(body.count || 20, 200);
     const max = body.max || 500_000;
     const testType = body.testType || 'cpu';
     const delayMs = body.delayMs || 100;
 
-    const emit = (event: string, payload: Record<string, unknown>) => {
-      subject.next({
-        data: JSON.stringify({ event, ...payload }),
-      } as MessageEvent);
-    };
-
-    const run = async () => {
+    return createEventStream(async (emit) => {
       const engineMode = this.engineRouter.getEngine();
       emit('start', {
         count,
@@ -123,7 +130,6 @@ export class LoadTestCompareService {
         emit('error', {
           message: 'WORKER_ENGINE=both 모드에서만 사용 가능합니다.',
         });
-        subject.complete();
         return;
       }
 
@@ -191,9 +197,7 @@ export class LoadTestCompareService {
           nodeMs,
           goMs,
           winner,
-          nodeWins: results.filter((result) => result.winner === 'node').length,
-          goWins: results.filter((result) => result.winner === 'go').length,
-          errors: results.filter((result) => result.winner === 'error').length,
+          ...countWinners(results),
           // 누적 평균도 표본이 없으면 null. 아래 done 집계와 같은 규칙을 쓴다.
           avgNodeMs: summarizeLatencies(pickLatencies(valid, 'nodeMs')).avgMs,
           avgGoMs: summarizeLatencies(pickLatencies(valid, 'goMs')).avgMs,
@@ -213,20 +217,13 @@ export class LoadTestCompareService {
         testType,
         task: taskLabel,
         totalMs,
-        nodeWins: results.filter((result) => result.winner === 'node').length,
-        goWins: results.filter((result) => result.winner === 'go').length,
-        errors: results.filter((result) => result.winner === 'error').length,
+        ...countWinners(results),
         // 전량 실패하면 각 지표가 null 로 나간다. 0 으로 메우면 두 엔진 다
         // 지연 0ms 로 보여 비교가 성립한 것처럼 읽힌다.
         node: summarizeLatencies(pickLatencies(valid, 'nodeMs')),
         go: summarizeLatencies(pickLatencies(valid, 'goMs')),
       });
-
-      subject.complete();
-    };
-
-    void run();
-    return subject.asObservable();
+    });
   }
 
   private createGoTask(

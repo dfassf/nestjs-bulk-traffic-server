@@ -1,10 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Observable, Subject } from 'rxjs';
+import { Observable } from 'rxjs';
 import { BENCH_DRIVER, BenchDriver } from '../bench-driver.interface';
 import { WorkloadType } from '../interfaces/queue-task.interface';
 import { QueueService } from '../queue.service';
 import { SimulationService } from '../simulation.service';
 import { computeMetrics, type TaskResult } from './load-test-metrics.util';
+import { createEventStream } from './sse-stream.util';
 
 type StreamTaskType = 'cpu' | 'io' | 'mixed' | 'db-write' | 'db-read';
 
@@ -128,17 +129,10 @@ export class LoadTestRunnerService {
     ioRatio?: number;
     max?: number;
   }): Observable<MessageEvent> {
-    const subject = new Subject<MessageEvent>();
     const count = Math.min(body.count || 20, 500);
     const testType = body.type || 'cpu';
 
-    const emit = (event: string, payload: Record<string, unknown>) => {
-      subject.next({
-        data: JSON.stringify({ event, ...payload }),
-      } as MessageEvent);
-    };
-
-    const run = async () => {
+    return createEventStream(async (emit) => {
       emit('start', { type: testType, count, timestamp: Date.now() });
 
       const results: TaskResult[] = [];
@@ -171,12 +165,7 @@ export class LoadTestRunnerService {
       const metrics = computeMetrics(results, totalMs);
 
       emit('done', { type: testType, ...metrics });
-
-      subject.complete();
-    };
-
-    void run();
-    return subject.asObservable();
+    });
   }
 
   private async dispatchSingleTask(

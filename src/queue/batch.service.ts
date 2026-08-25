@@ -68,7 +68,11 @@ export class BatchService {
     batchQueues: Map<string, TaskBatch>,
     activeRequests: number,
     maxConcurrentRequests: number,
-    onComplete: (processed: number, activeChange: number) => void,
+    onComplete: (
+      processed: number,
+      activeChange: number,
+      failed: number,
+    ) => void,
   ): void {
     const batch = batchQueues.get(category);
     if (!batch || batch.tasks.length === 0) {
@@ -97,6 +101,7 @@ export class BatchService {
     }
 
     let processed = 0;
+    let failed = 0;
     Promise.all(
       tasksToProcess.map((task) => {
         return Promise.resolve()
@@ -107,12 +112,15 @@ export class BatchService {
           })
           .catch((error) => {
             task.reject(error);
+            // 실패도 센다. 안 세면 배치가 통째로 터져도 통계에는 아무것도
+            // 안 남아서, 화면에서는 작업이 사라진 것처럼 보인다.
+            failed++;
           });
       }),
     ).finally(() => {
-      onComplete(processed, -dispatchCount);
+      onComplete(processed, -dispatchCount, failed);
     });
 
-    onComplete(0, dispatchCount);
+    onComplete(0, dispatchCount, 0);
   }
 }

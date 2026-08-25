@@ -76,6 +76,10 @@ export class QueueProcessorService {
             })
             .catch((error) => {
               task.reject(error);
+              // 실패도 반드시 센다. 안 세면 대시보드에 실패가 0 으로 남아
+              // 작업이 터지고 있는데도 아무 문제 없는 것처럼 보인다.
+              // 워커 경로(handleWorkerResult)는 세고 있어 기준도 어긋났다.
+              this.statsService.incrementRejected();
             })
             .finally(() => {
               this.state.decrementActiveRequests();
@@ -109,8 +113,11 @@ export class QueueProcessorService {
       this.state.batchQueues,
       this.state.activeRequests,
       this.state.maxConcurrentRequests,
-      (processed, activeChange) => {
+      (processed, activeChange, failed) => {
         this.statsService.incrementProcessed(processed);
+        if (failed > 0) {
+          this.statsService.incrementRejected(failed);
+        }
         this.state.activeRequests = Math.max(
           0,
           this.state.activeRequests + activeChange,

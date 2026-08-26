@@ -46,6 +46,7 @@ describe('ConsumerProcessManager', () => {
       `console.log('그룹=' + process.env.CONSUMER_GROUP_ID);
        console.log('개수=' + process.env.CONSUMER_COUNT);
        console.log('커밋=' + process.env.CONSUMER_COMMIT_MODE);
+       console.log('세션만료=' + process.env.CONSUMER_SESSION_TIMEOUT_MS);
        setInterval(() => {}, 1000);`,
     );
     manager = new ConsumerProcessManager(scriptPath);
@@ -69,6 +70,10 @@ describe('ConsumerProcessManager', () => {
       [{ crashAfter: -1 }, /0 이상 정수/],
       [{ commitMode: 'after' as any }, /after-process 또는 before-process/],
       [{ groupId: '   ' }, /비어 있습니다/],
+      // 브로커가 받아주는 범위를 벗어나면 그룹 참여 자체를 거부당한다.
+      [{ sessionTimeoutMs: 5999 }, /6000~1800000ms/],
+      [{ sessionTimeoutMs: 1_800_001 }, /6000~1800000ms/],
+      [{ sessionTimeoutMs: 10.5 }, /6000~1800000ms/],
     ])('잘못된 설정 %j 은 예외를 던진다', (options, pattern) => {
       expect(() => manager.spawnConsumer(options)).toThrow(pattern);
     });
@@ -87,13 +92,24 @@ describe('ConsumerProcessManager', () => {
         groupId: 'lab-group',
         instances: 3,
         commitMode: 'before-process',
+        sessionTimeoutMs: 10_000,
       });
 
-      await waitFor(() => info.recentLogs.length >= 3);
+      await waitFor(() => info.recentLogs.length >= 4);
 
       expect(info.recentLogs).toContain('그룹=lab-group');
       expect(info.recentLogs).toContain('개수=3');
       expect(info.recentLogs).toContain('커밋=before-process');
+      // 이 값이 안 넘어가면 조작판에서 뭘 바꾸든 계곡 폭이 그대로다.
+      expect(info.recentLogs).toContain('세션만료=10000');
+    });
+
+    it('세션 만료 시간을 안 주면 기본 60초로 넘긴다', async () => {
+      const info = manager.spawnConsumer({ groupId: 'lab-default' });
+
+      await waitFor(() => info.recentLogs.length >= 4);
+
+      expect(info.recentLogs).toContain('세션만료=60000');
     });
 
     it('띄운 프로세스를 목록에 담는다', async () => {

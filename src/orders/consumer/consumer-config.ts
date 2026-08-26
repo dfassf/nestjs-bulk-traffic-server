@@ -38,6 +38,19 @@ export interface ConsumerConfig {
   fromBeginning: boolean;
   /** 이 건수만큼 처리하면 스스로 죽는다. 중복 실험 자동화용. 0이면 안 죽는다. */
   crashAfter: number;
+
+  /**
+   * 카프카가 이 컨슈머를 죽은 것으로 판정하기까지 기다리는 시간(ms).
+   *
+   * 컨슈머가 급사하면 카프카는 곧바로 알아차리지 못한다. 이 시간이 지나야
+   * 그룹에서 빼고 파티션을 재배정한다. 그동안 죽은 컨슈머가 맡던 파티션은
+   * 아무도 읽지 않아 Lag 이 쌓인다(리밸런싱 계곡).
+   *
+   * 짧게 잡으면 계곡이 짧아지지만, 처리가 조금만 느려도 살아 있는 컨슈머가
+   * 하트비트를 놓쳐 쫓겨난다. 그 자체로 또 리밸런싱이 일어난다.
+   * 실험 대상이라 조절할 수 있게 열어둔다.
+   */
+  sessionTimeoutMs: number;
 }
 
 const DEFAULT_TOPICS = Object.values(ORDER_TOPICS);
@@ -94,6 +107,7 @@ export function consumerConfigFromEnv(): ConsumerConfig {
     commitDelayMs: readNonNegativeIntEnv('CONSUMER_COMMIT_DELAY_MS', 0),
     fromBeginning: process.env.CONSUMER_FROM_BEGINNING === 'true',
     crashAfter: readNonNegativeIntEnv('CONSUMER_CRASH_AFTER', 0),
+    sessionTimeoutMs: readPositiveIntEnv('CONSUMER_SESSION_TIMEOUT_MS', 60000),
   };
 }
 
@@ -109,5 +123,6 @@ export function describeConfig(config: ConsumerConfig): string {
     parts.push(`커밋지연=${config.commitDelayMs}ms`);
   if (config.fromBeginning) parts.push('처음부터');
   if (config.crashAfter > 0) parts.push(`${config.crashAfter}건 후 강제종료`);
+  parts.push(`세션만료=${config.sessionTimeoutMs}ms`);
   return parts.join(' ');
 }

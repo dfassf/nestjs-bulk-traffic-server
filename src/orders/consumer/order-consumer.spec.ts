@@ -64,6 +64,7 @@ function buildConfig(overrides: Partial<ConsumerConfig> = {}): ConsumerConfig {
     commitDelayMs: 0,
     fromBeginning: false,
     crashAfter: 0,
+    sessionTimeoutMs: 60000,
     ...overrides,
   };
 }

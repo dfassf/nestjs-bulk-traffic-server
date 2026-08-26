@@ -12,6 +12,7 @@ describe('consumerConfigFromEnv', () => {
     'CONSUMER_COMMIT_DELAY_MS',
     'CONSUMER_FROM_BEGINNING',
     'CONSUMER_CRASH_AFTER',
+    'CONSUMER_SESSION_TIMEOUT_MS',
     'KAFKA_BROKERS',
   ];
 
@@ -27,6 +28,14 @@ describe('consumerConfigFromEnv', () => {
       expect(config.commitDelayMs).toBe(0);
       expect(config.fromBeginning).toBe(false);
       expect(config.crashAfter).toBe(0);
+      expect(config.sessionTimeoutMs).toBe(60000);
+    });
+
+    // 리밸런싱 계곡의 폭을 정하는 값이라 실험에서 바꿔가며 잰다.
+    it('세션 만료 시간을 바꿀 수 있다', () => {
+      process.env.CONSUMER_SESSION_TIMEOUT_MS = '10000';
+
+      expect(consumerConfigFromEnv().sessionTimeoutMs).toBe(10000);
     });
 
     it('주문 토픽 전부를 구독한다', () => {
@@ -134,6 +143,7 @@ describe('describeConfig', () => {
       commitDelayMs: 0,
       fromBeginning: false,
       crashAfter: 0,
+      sessionTimeoutMs: 60000,
     });
 
     expect(text).toContain('그룹=order-processor');
@@ -154,11 +164,14 @@ describe('describeConfig', () => {
       commitDelayMs: 1000,
       fromBeginning: true,
       crashAfter: 50,
+      sessionTimeoutMs: 10000,
     });
 
     expect(text).toContain('처리지연=200ms');
     expect(text).toContain('커밋지연=1000ms');
     expect(text).toContain('처음부터');
     expect(text).toContain('50건 후 강제종료');
+    // 계곡 폭을 정하는 값이라 어떤 조건으로 쟀는지 함께 남겨야 한다.
+    expect(text).toContain('세션만료=10000ms');
   });
 });

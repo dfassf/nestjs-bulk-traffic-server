@@ -18,6 +18,8 @@ export interface SpawnConsumerOptions {
   commitDelayMs?: number;
   fromBeginning?: boolean;
   crashAfter?: number;
+  /** 카프카가 급사한 컨슈머를 죽은 것으로 판정하기까지 기다리는 시간(ms). */
+  sessionTimeoutMs?: number;
 }
 
 export interface ConsumerProcessInfo {
@@ -39,6 +41,11 @@ export const CONSUMER_SCRIPT_PATH = Symbol('CONSUMER_SCRIPT_PATH');
 const MAX_INSTANCES = 20;
 const MAX_DELAY_MS = 60_000;
 const MAX_LOG_LINES = 50;
+
+// 브로커의 group.min/max.session.timeout.ms 기본 범위(6초~30분).
+// 이 밖의 값을 주면 컨슈머가 그룹 참여를 거부당한다.
+const MIN_SESSION_TIMEOUT_MS = 6_000;
+const MAX_SESSION_TIMEOUT_MS = 1_800_000;
 const COMMIT_MODES: CommitMode[] = ['after-process', 'before-process'];
 
 /**
@@ -123,6 +130,19 @@ export class ConsumerProcessManager implements OnModuleDestroy {
       throw new Error(`강제 종료 건수는 0 이상 정수여야 합니다: ${crashAfter}`);
     }
 
+    // 브로커가 받아주는 범위를 벗어나면 컨슈머가 그룹 참여 자체를 거부당한다.
+    // 조용히 기본값으로 바꾸면 어떤 값으로 실험했는지 모르게 된다.
+    const sessionTimeoutMs = options.sessionTimeoutMs ?? 60000;
+    if (
+      !Number.isInteger(sessionTimeoutMs) ||
+      sessionTimeoutMs < MIN_SESSION_TIMEOUT_MS ||
+      sessionTimeoutMs > MAX_SESSION_TIMEOUT_MS
+    ) {
+      throw new Error(
+        `세션 만료 시간은 ${MIN_SESSION_TIMEOUT_MS}~${MAX_SESSION_TIMEOUT_MS}ms 사이여야 합니다: ${sessionTimeoutMs}`,
+      );
+    }
+
     const commitMode = options.commitMode ?? 'after-process';
     if (!COMMIT_MODES.includes(commitMode)) {
       throw new Error(
@@ -144,6 +164,7 @@ export class ConsumerProcessManager implements OnModuleDestroy {
       commitDelayMs,
       fromBeginning: options.fromBeginning ?? false,
       crashAfter,
+      sessionTimeoutMs,
     };
   }
 
@@ -167,6 +188,7 @@ export class ConsumerProcessManager implements OnModuleDestroy {
         CONSUMER_COMMIT_DELAY_MS: String(normalized.commitDelayMs),
         CONSUMER_FROM_BEGINNING: String(normalized.fromBeginning),
         CONSUMER_CRASH_AFTER: String(normalized.crashAfter),
+        CONSUMER_SESSION_TIMEOUT_MS: String(normalized.sessionTimeoutMs),
         CONSUMER_REPORT_INTERVAL_MS: '5000',
       },
       stdio: ['ignore', 'pipe', 'pipe'],

@@ -125,9 +125,11 @@ export class OrderConsumer {
 
     this.consumer = client.consumer({
       groupId: config.groupId,
-      // 처리 지연을 크게 주면 기본 세션 타임아웃(30초) 안에 하트비트를 못 보내
-      // 컨슈머가 그룹에서 쫓겨난다. 실험에서 일부러 느리게 만들 것이므로 넉넉히 둔다.
-      sessionTimeout: 60000,
+      // 리밸런싱 계곡의 폭을 정하는 값이다. 컨슈머가 급사해도 이 시간이
+      // 지나야 카프카가 알아차리고 파티션을 재배정한다.
+      // 짧게 잡으면 계곡이 짧아지지만, 처리가 느릴 때 살아 있는 컨슈머가
+      // 하트비트를 놓쳐 쫓겨난다. 실험 대상이라 설정으로 받는다.
+      sessionTimeout: config.sessionTimeoutMs,
     });
 
     this.stats = {

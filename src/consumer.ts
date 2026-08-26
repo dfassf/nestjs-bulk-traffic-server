@@ -3,6 +3,7 @@ import {
   describeConfig,
 } from './orders/consumer/consumer-config';
 import { OrderConsumer } from './orders/consumer/order-consumer';
+import { formatReport } from './orders/consumer/consumer-report';
 import { SqliteOrderStore } from './orders/sqlite-order.store';
 
 /**
@@ -89,23 +90,15 @@ async function bootstrap(): Promise<void> {
 }
 
 function printStats(consumers: OrderConsumer[]): void {
-  const total = consumers.reduce((sum, c) => sum + c.getStats().processed, 0);
-  const failed = consumers.reduce((sum, c) => sum + c.getStats().failed, 0);
-  if (total === 0 && failed === 0) return;
+  const lines = formatReport(
+    consumers.map((consumer) => ({
+      stats: consumer.getStats(),
+      crashed: consumer.hasCrashed(),
+    })),
+  );
 
-  console.log(`[consumer] 누적 처리 ${total}건 실패 ${failed}건`);
-  for (const consumer of consumers) {
-    const stats = consumer.getStats();
-    const partitions = Object.entries(stats.partitionCounts)
-      .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([p, count]) => `p${p}:${count}`)
-      .join(' ');
-    // 파티션이 하나도 없으면 이 컨슈머가 놀고 있다는 뜻이다(파티션보다 컨슈머가 많을 때).
-    // 빠진 컨슈머는 표시해준다. 안 그러면 처리량이 왜 줄었는지 읽을 수 없다.
-    const state = consumer.hasCrashed() ? ' [커밋 없이 빠짐]' : '';
-    console.log(
-      `  ${stats.consumerId} 처리=${stats.processed} ${partitions || '(할당된 파티션 없음)'}${state}`,
-    );
+  for (const line of lines) {
+    console.log(line);
   }
 }
 

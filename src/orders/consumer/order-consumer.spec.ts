@@ -1,5 +1,9 @@
 import { Kafka } from 'kafkajs';
-import { OrderConsumer } from './order-consumer';
+import {
+  ConsumerStats,
+  OrderConsumer,
+  summarizePerformance,
+} from './order-consumer';
 import { ConsumerConfig } from './consumer-config';
 import { OrderStore } from '../order-store.interface';
 import { OrderEventPayload, OrderEventType } from '../order-events';
@@ -522,5 +526,104 @@ describe('OrderConsumer', () => {
 
       expect(state.disconnected).toBe(false);
     });
+  });
+});
+
+/**
+ * Go 컨슈머(go-engine/internal/consumer/stats.go)와 같은 규칙이어야
+ * 두 런타임을 나란히 비교할 수 있다. 한쪽만 기준이 다르면 숫자가
+ * 달라도 그게 성능 차이인지 계산 차이인지 알 수 없다.
+ */
+describe('summarizePerformance', () => {
+  function buildStats(overrides: Partial<ConsumerStats> = {}): ConsumerStats {
+    return {
+      consumerId: 'c-1',
+      processed: 0,
+      failed: 0,
+      partitionCounts: {},
+      startedAt: 1_000,
+      firstProcessedAt: null,
+      lastProcessedAt: null,
+      latenciesMs: [],
+      ...overrides,
+    };
+  }
+
+  // 한 건도 처리 못 했는데 0ms 로 내보내면 가장 빠른 결과처럼 읽힌다.
+  it('표본이 없으면 지연·처리량이 0 이 아니라 null 이다', () => {
+    const perf = summarizePerformance(buildStats());
+
+    expect(perf.avgMs).toBeNull();
+    expect(perf.p50Ms).toBeNull();
+    expect(perf.p95Ms).toBeNull();
+    expect(perf.throughputPerSec).toBeNull();
+  });
+
+  it('전량 실패해도 지연은 null 이다', () => {
+    const perf = summarizePerformance(buildStats({ failed: 3 }));
+
+    expect(perf.failed).toBe(3);
+    expect(perf.avgMs).toBeNull();
+    expect(perf.throughputPerSec).toBeNull();
+  });
+
+  // 분위수를 내림으로 잡으면 p95 가 실제보다 낮게 나와 느린 꼬리가 가려진다.
+  it('분위수 위치를 올림으로 잡는다', () => {
+    const perf = summarizePerformance(
+      buildStats({
+        processed: 5,
+        latenciesMs: [50, 10, 90, 20, 30],
+      }),
+    );
+
+    // 정렬하면 10·20·30·50·90. Go 쪽과 같은 값이 나와야 한다.
+    expect(perf.p50Ms).toBe(30);
+    expect(perf.p95Ms).toBe(90);
+  });
+
+  // 처리량은 '일한 시간'으로 나눈다. 기다리며 논 시간을 넣으면
+  // 처리가 끝난 뒤에도 숫자가 계속 나빠진다.
+  it('처리량은 첫 처리부터 마지막 처리까지로 잰다', () => {
+    const perf = summarizePerformance(
+      buildStats({
+        processed: 100,
+        // 컨슈머는 1초에 떴지만 첫 건은 10초에 처리했다.
+        startedAt: 1_000,
+        firstProcessedAt: 10_000,
+        lastProcessedAt: 11_000,
+        latenciesMs: Array(100).fill(1),
+      }),
+    );
+
+    // 일한 시간 1초에 100건 → 100건/초.
+    // 뜬 시각부터 셌다면 100/10 = 10건/초로 나온다.
+    expect(perf.throughputPerSec).toBe(100);
+  });
+
+  it('한 건뿐이면 처리량은 측정 불가다', () => {
+    const perf = summarizePerformance(
+      buildStats({
+        processed: 1,
+        firstProcessedAt: 10_000,
+        lastProcessedAt: 10_000,
+        latenciesMs: [5],
+      }),
+    );
+
+    // 잰 구간이 0 이라 나눌 수 없다. 0 으로 메우면 '처리량 0'으로 보인다.
+    expect(perf.throughputPerSec).toBeNull();
+    // 지연은 표본이 있으니 나와야 한다.
+    expect(perf.avgMs).toBe(5);
+  });
+
+  it('평균은 느린 건을 반영한다', () => {
+    const perf = summarizePerformance(
+      buildStats({
+        processed: 4,
+        latenciesMs: [1, 1, 1, 397],
+      }),
+    );
+
+    expect(perf.avgMs).toBe(100);
   });
 });

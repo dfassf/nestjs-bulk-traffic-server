@@ -10,7 +10,78 @@ export interface ConsumerStats {
   /** 파티션별 처리 건수. 분배가 고른지 볼 때 쓴다. */
   partitionCounts: Record<number, number>;
   startedAt: number;
+  /**
+   * 첫 건을 처리한 시각. 처리량을 낼 때 분모의 시작점이다.
+   *
+   * 컨슈머가 뜬 시각(startedAt)을 쓰면 메시지를 기다리며 논 시간까지
+   * 분모에 들어가, 처리가 끝난 뒤에도 숫자가 계속 나빠진다.
+   * Go 컨슈머와 같은 기준으로 재야 비교가 성립한다.
+   */
+  firstProcessedAt: number | null;
   lastProcessedAt: number | null;
+  /** 한 건을 처리하는 데 걸린 시간(ms). 평균만 보면 느린 꼬리가 안 보인다. */
+  latenciesMs: number[];
+}
+
+/**
+ * 처리 성능 요약. 표본이 없으면 각 값이 null 이다(0 이 아니다).
+ *
+ * 0 으로 메우면 한 건도 처리 못 한 결과가 가장 빠른 것처럼 읽힌다.
+ */
+export interface ConsumerPerformance {
+  processed: number;
+  failed: number;
+  avgMs: number | null;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  throughputPerSec: number | null;
+}
+
+/**
+ * 분위수. 위치는 올림으로 잡는다.
+ *
+ * 내림으로 잡으면 p95 가 실제보다 낮게 나와 느린 꼬리가 가려진다.
+ * Go 컨슈머(internal/consumer/stats.go)와 같은 규칙이어야 비교가 성립한다.
+ */
+function percentileMs(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(
+    Math.max(Math.ceil((sorted.length * p) / 100) - 1, 0),
+    sorted.length - 1,
+  );
+  return sorted[index];
+}
+
+/** 통계에서 성능 요약을 만든다. Go 쪽 Snapshot 과 같은 기준을 쓴다. */
+export function summarizePerformance(
+  stats: ConsumerStats,
+): ConsumerPerformance {
+  const { latenciesMs, firstProcessedAt, lastProcessedAt, processed } = stats;
+
+  const avgMs =
+    latenciesMs.length > 0
+      ? latenciesMs.reduce((sum, ms) => sum + ms, 0) / latenciesMs.length
+      : null;
+
+  // 두 건 이상이라야 사이 간격이 생긴다. 한 건뿐이면 잰 구간이 0 이라 나눌 수 없다.
+  let throughputPerSec: number | null = null;
+  if (processed > 1 && firstProcessedAt !== null && lastProcessedAt !== null) {
+    const elapsedMs = lastProcessedAt - firstProcessedAt;
+    if (elapsedMs > 0) {
+      throughputPerSec = (processed / elapsedMs) * 1000;
+    }
+  }
+
+  return {
+    processed,
+    failed: stats.failed,
+    avgMs,
+    p50Ms: percentileMs(latenciesMs, 50),
+    p95Ms: percentileMs(latenciesMs, 95),
+    throughputPerSec,
+  };
 }
 
 export interface ConsumerHooks {
@@ -65,7 +136,9 @@ export class OrderConsumer {
       failed: 0,
       partitionCounts: {},
       startedAt: Date.now(),
+      firstProcessedAt: null,
       lastProcessedAt: null,
+      latenciesMs: [],
     };
   }
 
@@ -133,12 +206,25 @@ export class OrderConsumer {
       await this.commit(topic, partition, message.offset);
     }
 
+    // 처리 시간만 잰다. 커밋은 빼야 두 런타임의 처리 성능을 비교할 수 있다.
+    //
+    // Date.now() 가 아니라 performance.now() 를 쓴다. 앞의 것은 1ms 해상도라
+    // 1ms 보다 짧은 처리가 전부 0ms 로 찍히고, 그러면 p95 가 0.000ms 인데
+    // 평균은 0.043ms 인 이상한 결과가 나온다. Go 컨슈머는 나노초까지 재므로
+    // 같은 해상도로 맞춰야 비교가 성립한다.
+    const startedAt = performance.now();
     try {
       await this.process(topic, partition, message.offset, message.value);
+      const finishedAt = performance.now();
+      const now = Date.now();
+      if (this.stats.processed === 0) {
+        this.stats.firstProcessedAt = now;
+      }
       this.stats.processed++;
       this.stats.partitionCounts[partition] =
         (this.stats.partitionCounts[partition] ?? 0) + 1;
-      this.stats.lastProcessedAt = Date.now();
+      this.stats.lastProcessedAt = now;
+      this.stats.latenciesMs.push(finishedAt - startedAt);
     } catch (error) {
       this.stats.failed++;
       // 실패를 조용히 넘기면 처리된 것처럼 보인다. 어느 건이 왜 실패했는지 남긴다.

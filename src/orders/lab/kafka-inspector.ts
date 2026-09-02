@@ -216,14 +216,31 @@ export class KafkaInspector {
     groupId: string,
     topic: string,
     target: 'earliest' | 'latest',
-  ): Promise<{ groupId: string; topic: string; target: string }> {
+  ): Promise<{
+    groupId: string;
+    topic: string;
+    target: string;
+    /** 실제로 넣은 파티션별 위치. 어디로 갔는지 확인용. */
+    offsets: { partition: number; offset: string }[];
+  }> {
     return this.withAdmin(async (admin) => {
+      // 파티션마다 갈 위치를 직접 계산해서 명시적으로 넣는다.
+      //
+      // kafkajs 의 resetOffsets 는 커밋 기록을 '지운다'. 그러면 컨슈머는
+      // 커밋이 없는 것으로 보고 자기 설정(fromBeginning)을 따르는데,
+      // 그게 false 면 최신부터 읽어서 과거를 하나도 다시 안 읽는다.
+      // 되감기는 성공했다고 나오는데 재처리는 안 되는 상태가 된다.
+      //
+      // low 는 아직 남아 있는 가장 오래된 위치다. retention 으로 지워진
+      // 구간이 있으면 0 이 아니라 그 지점부터다.
+      const topicOffsets = await admin.fetchTopicOffsets(topic);
+      const offsets = topicOffsets.map((entry) => ({
+        partition: entry.partition,
+        offset: target === 'earliest' ? entry.low : entry.high,
+      }));
+
       try {
-        await admin.resetOffsets({
-          groupId,
-          topic,
-          earliest: target === 'earliest',
-        });
+        await admin.setOffsets({ groupId, topic, partitions: offsets });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         throw new Error(
@@ -233,9 +250,10 @@ export class KafkaInspector {
       }
 
       this.logger.log(
-        `오프셋 되감기 그룹=${groupId} 토픽=${topic} 대상=${target}`,
+        `오프셋 되감기 그룹=${groupId} 토픽=${topic} 대상=${target} ` +
+          `(${offsets.map((o) => `p${o.partition}:${o.offset}`).join(' ')})`,
       );
-      return { groupId, topic, target };
+      return { groupId, topic, target, offsets };
     });
   }
 }

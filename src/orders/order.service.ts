@@ -10,6 +10,7 @@ import {
 } from './order-events';
 import {
   DuplicateEventSummary,
+  GroupConsumptionSummary,
   ORDER_STORE,
   OrderStore,
 } from './order-store.interface';
@@ -132,6 +133,11 @@ export class OrderService {
 
   async findDuplicates(): Promise<DuplicateEventSummary[]> {
     return this.store.findDuplicates();
+  }
+
+  /** 컨슈머 그룹별 소비 건수. 여러 그룹이 각자 전량 받는지 볼 때 쓴다. */
+  async countByGroup(): Promise<GroupConsumptionSummary[]> {
+    return this.store.countByGroup();
   }
 
   async getStats() {

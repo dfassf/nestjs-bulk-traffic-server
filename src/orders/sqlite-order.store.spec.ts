@@ -204,6 +204,75 @@ describe('SqliteOrderStore', () => {
     });
   });
 
+  /**
+   * 여러 그룹이 같은 토픽을 구독할 때, 전체 건수만 보면
+   * "셋이 나눠 가졌다" 와 "셋이 각자 전량 받았다" 가 구분되지 않는다.
+   * 그룹으로 갈라 세야 보인다.
+   */
+  describe('그룹별 소비 집계', () => {
+    it('그룹마다 소비 건수를 따로 센다', async () => {
+      // 세 그룹이 각자 2건씩 받은 상황
+      for (const group of ['inventory', 'settlement', 'notification']) {
+        await store.recordEvent(
+          buildEvent({ orderId: 'ord-1', consumerId: `${group}/100-0` }),
+        );
+        await store.recordEvent(
+          buildEvent({ orderId: 'ord-2', consumerId: `${group}/100-0` }),
+        );
+      }
+
+      const groups = await store.countByGroup();
+
+      expect(groups).toHaveLength(3);
+      // 전체는 6건이지만 그룹마다 2건씩이다. 나눠 가진 게 아니다.
+      for (const group of groups) {
+        expect(group.count).toBe(2);
+      }
+      expect(groups.map((g) => g.groupId).sort()).toEqual([
+        'inventory',
+        'notification',
+        'settlement',
+      ]);
+    });
+
+    it('한 그룹 안의 컨슈머 수를 센다', async () => {
+      // 같은 그룹에서 컨슈머 둘이 나눠 처리한 상황
+      await store.recordEvent(
+        buildEvent({ orderId: 'ord-1', consumerId: 'inventory/100-0' }),
+      );
+      await store.recordEvent(
+        buildEvent({ orderId: 'ord-2', consumerId: 'inventory/100-1' }),
+      );
+      await store.recordEvent(
+        buildEvent({ orderId: 'ord-3', consumerId: 'inventory/100-1' }),
+      );
+
+      const [group] = await store.countByGroup();
+
+      expect(group.groupId).toBe('inventory');
+      expect(group.count).toBe(3);
+      // 세 건을 컨슈머 둘이 나눠 처리했다.
+      expect(group.consumers).toBe(2);
+    });
+
+    it('그룹 이름에 슬래시가 없으면 그대로 둔다', async () => {
+      // 그룹 이름을 붙이기 전에 쌓인 기록. 어느 그룹인지 알 수 없다.
+      await store.recordEvent(
+        buildEvent({ orderId: 'ord-1', consumerId: '12345-0' }),
+      );
+
+      const [group] = await store.countByGroup();
+
+      // 임의로 특정 그룹에 넣으면 집계가 조용히 틀어진다.
+      expect(group.groupId).toBe('12345-0');
+      expect(group.count).toBe(1);
+    });
+
+    it('기록이 없으면 빈 목록이다', async () => {
+      expect(await store.countByGroup()).toEqual([]);
+    });
+  });
+
   describe('중복 집계', () => {
     it('두 번 이상 처리된 주문·이벤트를 건수와 함께 돌려준다', async () => {
       await store.recordEvent(buildEvent({ orderId: 'ord-1' }));

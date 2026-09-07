@@ -7,7 +7,11 @@ import {
   OrderItem,
   OrderStatus,
 } from './order-events';
-import { DuplicateEventSummary, OrderStore } from './order-store.interface';
+import {
+  DuplicateEventSummary,
+  GroupConsumptionSummary,
+  OrderStore,
+} from './order-store.interface';
 
 interface OrderRow {
   order_id: string;
@@ -40,6 +44,13 @@ interface DuplicateRow {
 /** COUNT(*) 한 개만 돌려주는 집계 결과. */
 interface CountRow {
   cnt: number;
+}
+
+/** 그룹별 소비 집계 결과. */
+interface GroupRow {
+  group_id: string;
+  cnt: number;
+  consumers: number;
 }
 
 /**
@@ -208,6 +219,37 @@ export class SqliteOrderStore implements OrderStore {
       orderId: row.order_id,
       eventType: row.event_type as OrderEventType,
       count: row.cnt,
+    }));
+  }
+
+  /**
+   * 컨슈머 그룹별 소비 건수.
+   *
+   * consumer_id 는 '그룹/프로세스-순번' 형태라 첫 '/' 앞이 그룹 이름이다.
+   * '/' 가 없는 옛 기록은 그룹을 알 수 없으므로 그대로 둔다.
+   * 임의로 특정 그룹에 넣으면 집계가 조용히 틀어진다.
+   */
+  async countByGroup(): Promise<GroupConsumptionSummary[]> {
+    const rows = this.db
+      .prepare<[], GroupRow>(
+        `SELECT
+           CASE
+             WHEN instr(consumer_id, '/') > 0
+               THEN substr(consumer_id, 1, instr(consumer_id, '/') - 1)
+             ELSE consumer_id
+           END AS group_id,
+           COUNT(*) AS cnt,
+           COUNT(DISTINCT consumer_id) AS consumers
+         FROM order_events
+         GROUP BY group_id
+         ORDER BY cnt DESC`,
+      )
+      .all();
+
+    return rows.map((row) => ({
+      groupId: row.group_id,
+      count: row.cnt,
+      consumers: row.consumers,
     }));
   }
 

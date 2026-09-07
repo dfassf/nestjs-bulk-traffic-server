@@ -68,7 +68,9 @@ async function bootstrap(): Promise<void> {
   };
 
   for (let i = 0; i < config.instances; i++) {
-    const consumerId = `${process.pid}-${i}`;
+    // 그룹 이름을 앞에 붙인다. 여러 그룹이 같은 토픽을 동시에 소비할 때
+    // 소비 기록만 보고 어느 그룹이 처리했는지 갈라내야 하기 때문이다.
+    const consumerId = `${config.groupId}/${process.pid}-${i}`;
     const consumer = new OrderConsumer(config, store, consumerId, {
       onCrashPoint,
     });

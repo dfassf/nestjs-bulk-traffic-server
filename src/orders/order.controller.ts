@@ -69,6 +69,21 @@ export class OrderController {
     };
   }
 
+  /**
+   * 컨슈머 그룹별 소비 건수.
+   *
+   * 여러 그룹이 같은 토픽을 구독할 때, 나눠 가진 것인지 각자 전량 받은 것인지는
+   * 전체 건수로는 구분되지 않는다. 그룹으로 갈라야 보인다.
+   */
+  @Get('groups')
+  async groups() {
+    const groups = await this.orderService.countByGroup();
+    return {
+      groups: groups.length,
+      detail: groups,
+    };
+  }
+
   @Delete()
   async reset() {
     await this.orderService.reset();

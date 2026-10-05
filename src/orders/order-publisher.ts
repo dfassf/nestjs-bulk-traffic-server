@@ -51,7 +51,13 @@ export function orderPublisherConfigFromEnv(
   };
 }
 
-export interface PublishResult {
+/**
+ * 카프카가 돌려준 발행 결과.
+ *
+ * 이 파일 안에서만 쓴다. 바깥은 통로 인터페이스의 DispatchResult 를 보므로
+ * 내보내지 않는다. 내보내면 카프카 전용 모양이 주문 서비스까지 번진다.
+ */
+interface PublishResult {
   topic: string;
   partition: number;
   offset: string;
@@ -151,14 +157,5 @@ export class OrderPublisher implements OnModuleInit, OnModuleDestroy {
       offset: String(record.baseOffset),
       key,
     };
-  }
-
-  /** 여러 이벤트를 한 번에 보낸다. 대량 발행 실험용. */
-  async publishMany(payloads: OrderEventPayload[]): Promise<PublishResult[]> {
-    const results: PublishResult[] = [];
-    for (const payload of payloads) {
-      results.push(await this.publish(payload));
-    }
-    return results;
   }
 }

@@ -232,21 +232,5 @@ describe('OrderPublisher', () => {
       expect(value.amount).toBe(33000);
       expect(value.items).toHaveLength(1);
     });
-
-    it('여러 건을 순서대로 발행한다', async () => {
-      stubSend();
-      const publisher = new OrderPublisher(buildConfig());
-      await publisher.onModuleInit();
-
-      const results = await publisher.publishMany([
-        buildPayload({ orderId: 'ord-1' }),
-        buildPayload({ orderId: 'ord-2' }),
-      ]);
-
-      expect(results).toHaveLength(2);
-      expect(mocks().sendMock).toHaveBeenCalledTimes(2);
-      expect(mocks().sendMock.mock.calls[0][0].messages[0].key).toBe('ord-1');
-      expect(mocks().sendMock.mock.calls[1][0].messages[0].key).toBe('ord-2');
-    });
   });
 });

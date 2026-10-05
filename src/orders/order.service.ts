@@ -130,6 +130,54 @@ export interface BulkOrderResult {
   errors: string[];
 }
 
+/** 에러 메시지를 몇 건까지 담을지. 전부 담으면 응답이 실패 메시지로 뒤덮인다. */
+const MAX_REPORTED_ERRORS = 5;
+
+/** 대량 실행 한 번의 결과. 성공한 것들과 실패 건수를 함께 돌려준다. */
+interface RepeatOutcome<T> {
+  results: T[];
+  failed: number;
+  elapsedMs: number;
+  errors: string[];
+}
+
+/**
+ * 같은 작업을 count 번 반복한다.
+ *
+ * 개별 실패를 관용하되 건수를 세서 돌려준다. 조용히 넘기면 100건 중 40건이
+ * 실패해도 "완료" 로 보인다. 대량 작업마다 이 뼈대를 베껴 쓰면 실패 처리
+ * 방식이 갈라지므로 한 곳에 둔다.
+ */
+async function repeatCollecting<T>(
+  count: number,
+  work: (index: number) => Promise<T>,
+  options: { delayMs?: number } = {},
+): Promise<RepeatOutcome<T>> {
+  const startedAt = Date.now();
+  const results: T[] = [];
+  const errors: string[] = [];
+
+  for (let i = 0; i < count; i++) {
+    try {
+      results.push(await work(i));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (errors.length < MAX_REPORTED_ERRORS) errors.push(message);
+    }
+
+    if (options.delayMs && options.delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, options.delayMs));
+    }
+  }
+
+  return {
+    results,
+    failed: count - results.length,
+    elapsedMs: Date.now() - startedAt,
+    errors,
+  };
+}
+
 const DEFAULT_ITEM: OrderItem = {
   productId: 'prod-default',
   quantity: 1,
@@ -183,38 +231,32 @@ export class OrderService {
    * 100건 중 40건이 실패해도 "완료"로 보인다.
    */
   async createBulk(count: number, delayMs = 0): Promise<BulkOrderResult> {
-    const startedAt = Date.now();
-    const partitionCounts: Record<number, number> = {};
-    const errors: string[] = [];
-    let created = 0;
+    const outcome = await repeatCollecting(
+      count,
+      async () => (await this.createOrder({})).dispatch,
+      { delayMs },
+    );
 
-    for (let i = 0; i < count; i++) {
-      try {
-        const { dispatch } = await this.createOrder({});
-        created++;
-        partitionCounts[dispatch.partition] =
-          (partitionCounts[dispatch.partition] ?? 0) + 1;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        // 앞의 몇 건만 남긴다. 전부 담으면 응답이 실패 메시지로 뒤덮인다.
-        if (errors.length < 5) errors.push(message);
-      }
-
-      if (delayMs > 0) await this.sleep(delayMs);
+    if (outcome.failed > 0) {
+      this.logger.warn(`대량 주문 생성 ${outcome.failed}/${count}건 실패`);
     }
 
-    const failed = count - created;
-    if (failed > 0) {
-      this.logger.warn(`대량 주문 생성 ${failed}/${count}건 실패`);
+    // 파티션별 건수를 센다. 파티션을 모르는 통로(프로세스 안의 큐)는
+    // null 을 주므로 셈에서 뺀다. 0 으로 치면 "0번 파티션" 과 섞인다.
+    const partitionCounts: Record<number, number> = {};
+    for (const dispatch of outcome.results) {
+      if (dispatch.partition === null) continue;
+      partitionCounts[dispatch.partition] =
+        (partitionCounts[dispatch.partition] ?? 0) + 1;
     }
 
     return {
       requested: count,
-      created,
-      failed,
-      elapsedMs: Date.now() - startedAt,
+      created: outcome.results.length,
+      failed: outcome.failed,
+      elapsedMs: outcome.elapsedMs,
       partitionCounts,
-      errors,
+      errors: outcome.errors,
     };
   }
 
@@ -314,36 +356,24 @@ export class OrderService {
    * 조용히 넘기면 10건 중 4건이 중간에 끊겨도 "완료" 로 보인다.
    */
   async createWithLifecycle(count: number): Promise<LifecycleBulkResult> {
-    const startedAt = Date.now();
-    const orderIds: string[] = [];
-    const errors: string[] = [];
-    const lifecycles: LifecycleResult[] = [];
+    const outcome = await repeatCollecting(count, async () => {
+      const { order } = await this.createOrder({});
+      return this.dispatchLifecycle(order.orderId);
+    });
 
-    for (let i = 0; i < count; i++) {
-      try {
-        const { order } = await this.createOrder({});
-        lifecycles.push(await this.dispatchLifecycle(order.orderId));
-        orderIds.push(order.orderId);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (errors.length < 5) errors.push(message);
-      }
-    }
-
-    const failed = count - orderIds.length;
-    if (failed > 0) {
-      this.logger.warn(`주문 흐름 발행 ${failed}/${count}건 실패`);
+    if (outcome.failed > 0) {
+      this.logger.warn(`주문 흐름 발행 ${outcome.failed}/${count}건 실패`);
     }
 
     return {
       requested: count,
-      completed: orderIds.length,
-      failed,
-      elapsedMs: Date.now() - startedAt,
-      orderIds,
-      errors,
-      scatter: summarizeScatter(lifecycles),
-      samples: lifecycles.slice(0, 3),
+      completed: outcome.results.length,
+      failed: outcome.failed,
+      elapsedMs: outcome.elapsedMs,
+      orderIds: outcome.results.map((lifecycle) => lifecycle.orderId),
+      errors: outcome.errors,
+      scatter: summarizeScatter(outcome.results),
+      samples: outcome.results.slice(0, 3),
     };
   }
 
@@ -359,9 +389,5 @@ export class OrderService {
       items: order.items,
       emittedAt: Date.now(),
     };
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

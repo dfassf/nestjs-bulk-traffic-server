@@ -366,4 +366,70 @@ describe('OrderService', () => {
       expect(result.samples[0].steps).toHaveLength(3);
     });
   });
+  describe('대량 생성의 파티션 집계', () => {
+    /**
+     * 파티션이라는 개념이 없는 통로(프로세스 안의 큐)는 null 을 준다.
+     * 예전에는 그 null 이 그대로 키가 되어 응답에 {"null": 10000} 으로 나왔다.
+     * 0 으로 바꿔도 안 된다. "0번 파티션" 과 섞여 분포가 틀어진다.
+     */
+    it('파티션을 모르는 통로는 분포에서 뺀다', async () => {
+      dispatcher.dispatch.mockResolvedValue({
+        destination: 'memory://orders',
+        partition: null,
+        offset: null,
+        key: null,
+      });
+
+      const result = await service.createBulk(5);
+
+      expect(result.created).toBe(5);
+      expect(result.partitionCounts).toEqual({});
+    });
+
+    it('파티션을 아는 통로는 그대로 센다', async () => {
+      let n = 0;
+      dispatcher.dispatch.mockImplementation(async () => ({
+        destination: 'orders.created',
+        partition: n++ % 2,
+        offset: String(n),
+        key: 'k',
+      }));
+
+      const result = await service.createBulk(4);
+
+      expect(result.partitionCounts).toEqual({ 0: 2, 1: 2 });
+    });
+
+    // 실패를 조용히 넘기면 중간에 끊긴 건이 있어도 "완료" 로 보인다.
+    it('일부 실패를 건수로 드러내고 합이 맞는다', async () => {
+      let n = 0;
+      dispatcher.dispatch.mockImplementation(async () => {
+        n++;
+        if (n === 2) throw new Error('발행 실패');
+        return {
+          destination: 'orders.created',
+          partition: 0,
+          offset: String(n),
+          key: 'k',
+        };
+      });
+
+      const result = await service.createBulk(3);
+
+      expect(result.created).toBe(2);
+      expect(result.failed).toBe(1);
+      expect(result.created + result.failed).toBe(3);
+      expect(result.errors).toHaveLength(1);
+    });
+
+    // 에러를 전부 담으면 응답이 실패 메시지로 뒤덮인다.
+    it('에러 메시지는 다섯 건까지만 담는다', async () => {
+      dispatcher.dispatch.mockRejectedValue(new Error('계속 실패'));
+
+      const result = await service.createBulk(20);
+
+      expect(result.failed).toBe(20);
+      expect(result.errors).toHaveLength(5);
+    });
+  });
 });

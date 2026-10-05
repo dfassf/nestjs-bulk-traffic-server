@@ -13,6 +13,8 @@ import { OrderItem } from './order-events';
 
 const MAX_BULK_COUNT = 10000;
 const MAX_EVENT_LIMIT = 1000;
+// 주문 하나당 이벤트 4건이 나가므로 건수를 낮게 잡는다.
+const MAX_LIFECYCLE_COUNT = 500;
 
 @Controller('orders')
 export class OrderController {
@@ -35,6 +37,18 @@ export class OrderController {
     const count = Math.min(Math.max(body?.count ?? 100, 1), MAX_BULK_COUNT);
     const delayMs = Math.max(body?.delayMs ?? 0, 0);
     return this.orderService.createBulk(count, delayMs);
+  }
+
+  /**
+   * 주문을 만들고 흐름 전체(생성 → 재고 → 결제 → 배송)를 내보낸다.
+   *
+   * 키를 쓰면 같은 주문의 단계가 같은 파티션으로 모이고, 키를 빼면 흩어진다.
+   * 그 차이를 보는 실험(키가 순서를 지배한다)에서 쓴다.
+   */
+  @Post('lifecycle')
+  async createLifecycle(@Body() body: { count?: number }) {
+    const count = Math.min(Math.max(body?.count ?? 10, 1), MAX_LIFECYCLE_COUNT);
+    return this.orderService.createWithLifecycle(count);
   }
 
   @Get('stats')

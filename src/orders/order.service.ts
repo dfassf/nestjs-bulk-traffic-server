@@ -7,6 +7,7 @@ import {
   OrderEventType,
   OrderItem,
   OrderStatus,
+  statusAfter,
 } from './order-events';
 import {
   DuplicateEventSummary,
@@ -29,6 +30,94 @@ export interface CreateOrderInput {
 export interface CreateOrderResult {
   order: Order;
   dispatch: DispatchResult;
+}
+
+/**
+ * 주문 생성 뒤에 이어지는 단계들.
+ *
+ * CREATED 는 주문을 만들 때 이미 발행되므로 여기서 제외한다.
+ * 포함하면 생성 이벤트가 두 번 나가 중복 집계가 틀어진다.
+ */
+const LIFECYCLE_EVENT_TYPES = [
+  OrderEventType.INVENTORY_RESERVED,
+  OrderEventType.PAYMENT_APPROVED,
+  OrderEventType.SHIPMENT_STARTED,
+] as const;
+
+/** 흐름 한 단계를 내보낸 결과. */
+export interface LifecycleStep {
+  eventType: OrderEventType;
+  destination: string;
+  partition: number | null;
+  offset: string | null;
+  key: string | null;
+}
+
+export interface LifecycleResult {
+  orderId: string;
+  steps: LifecycleStep[];
+}
+
+/**
+ * 같은 주문의 단계들이 몇 개의 파티션으로 흩어졌는지.
+ *
+ * 카프카는 같은 토픽·같은 파티션 안에서만 순서를 지킨다. 한 주문의 단계가
+ * 여러 파티션으로 갈라지면 받는 쪽에서 순서가 뒤바뀔 수 있다.
+ */
+export interface ScatterSummary {
+  /** 단계가 한 파티션에 모인 주문 수. */
+  singlePartition: number;
+  /** 단계가 여러 파티션으로 흩어진 주문 수. */
+  multiPartition: number;
+  /** 주문당 평균 파티션 수. 1 이면 전부 모였다는 뜻. */
+  avgPartitionsPerOrder: number | null;
+}
+
+/**
+ * 흩어짐을 센다.
+ *
+ * 파티션을 모르는 통로(프로세스 안의 큐)는 null 을 주므로 셀 대상이 아니다.
+ * 0 으로 치면 "0번 파티션에 모였다" 로 읽혀 결과가 뒤집힌다.
+ */
+function summarizeScatter(lifecycles: LifecycleResult[]): ScatterSummary {
+  let single = 0;
+  let multi = 0;
+  let partitionTotal = 0;
+  let counted = 0;
+
+  for (const lifecycle of lifecycles) {
+    const partitions = new Set(
+      lifecycle.steps
+        .map((step) => step.partition)
+        .filter((p): p is number => p !== null),
+    );
+    if (partitions.size === 0) continue;
+
+    counted++;
+    partitionTotal += partitions.size;
+    if (partitions.size === 1) single++;
+    else multi++;
+  }
+
+  return {
+    singlePartition: single,
+    multiPartition: multi,
+    // 표본이 없으면 0 이 아니라 null. 0 은 "파티션이 없다" 로 읽힌다.
+    avgPartitionsPerOrder: counted > 0 ? partitionTotal / counted : null,
+  };
+}
+
+export interface LifecycleBulkResult {
+  requested: number;
+  completed: number;
+  failed: number;
+  elapsedMs: number;
+  orderIds: string[];
+  errors: string[];
+  /** 같은 주문의 단계가 몇 갈래로 흩어졌는지. 키 효과를 보는 지표다. */
+  scatter: ScatterSummary;
+  /** 눈으로 확인할 샘플 몇 건. */
+  samples: LifecycleResult[];
 }
 
 export interface BulkOrderResult {
@@ -179,6 +268,83 @@ export class OrderService {
   async reset(): Promise<void> {
     await this.store.reset();
     this.logger.log('주문·이벤트 기록을 비웠습니다.');
+  }
+
+  /**
+   * 한 주문의 흐름을 단계 순서대로 내보낸다. 생성 → 재고 → 결제 → 배송.
+   *
+   * 실험용이다. 실제 재고 차감이나 결제 승인을 하지 않는다. 각 단계가
+   * "일어났다" 는 이벤트만 순서대로 발행하고 주문 상태를 올린다.
+   *
+   * 단계 순서는 보낸 쪽에서 지킨다. 받는 쪽에서 그 순서가 유지되는지가
+   * 키 설정에 달려 있고, 그걸 보는 것이 실험 6이다.
+   */
+  async dispatchLifecycle(orderId: string): Promise<LifecycleResult> {
+    const order = await this.store.findOrder(orderId);
+    if (!order) {
+      throw new Error(`주문을 찾을 수 없습니다: ${orderId}`);
+    }
+
+    const steps: LifecycleStep[] = [];
+
+    // CREATED 는 주문 생성 때 이미 나갔으므로 그 뒤 세 단계만 보낸다.
+    // 여기서 다시 보내면 생성 이벤트가 두 번 발행돼 중복 집계가 틀어진다.
+    for (const eventType of LIFECYCLE_EVENT_TYPES) {
+      const dispatch = await this.dispatcher.dispatch(
+        this.toPayload(order, eventType),
+      );
+      await this.store.updateStatus(orderId, statusAfter(eventType));
+
+      steps.push({
+        eventType,
+        destination: dispatch.destination,
+        partition: dispatch.partition,
+        offset: dispatch.offset,
+        key: dispatch.key,
+      });
+    }
+
+    return { orderId, steps };
+  }
+
+  /**
+   * 주문을 만들고 흐름 전체를 내보낸다. 실험 6에서 쓴다.
+   *
+   * 개별 주문의 실패를 관용하되 건수를 세서 보고한다.
+   * 조용히 넘기면 10건 중 4건이 중간에 끊겨도 "완료" 로 보인다.
+   */
+  async createWithLifecycle(count: number): Promise<LifecycleBulkResult> {
+    const startedAt = Date.now();
+    const orderIds: string[] = [];
+    const errors: string[] = [];
+    const lifecycles: LifecycleResult[] = [];
+
+    for (let i = 0; i < count; i++) {
+      try {
+        const { order } = await this.createOrder({});
+        lifecycles.push(await this.dispatchLifecycle(order.orderId));
+        orderIds.push(order.orderId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (errors.length < 5) errors.push(message);
+      }
+    }
+
+    const failed = count - orderIds.length;
+    if (failed > 0) {
+      this.logger.warn(`주문 흐름 발행 ${failed}/${count}건 실패`);
+    }
+
+    return {
+      requested: count,
+      completed: orderIds.length,
+      failed,
+      elapsedMs: Date.now() - startedAt,
+      orderIds,
+      errors,
+      scatter: summarizeScatter(lifecycles),
+      samples: lifecycles.slice(0, 3),
+    };
   }
 
   private toPayload(

@@ -216,4 +216,154 @@ describe('OrderService', () => {
       expect(stats.producer.keyEnabled).toBe(true);
     });
   });
+  describe('주문 흐름 발행', () => {
+    beforeEach(() => {
+      // 흐름 발행은 저장된 주문을 다시 읽어서 단계를 보낸다.
+      store.findOrder.mockImplementation(async (orderId: string) => {
+        return savedOrders.find((o) => o.orderId === orderId) ?? null;
+      });
+    });
+
+    // 보내는 쪽에서 단계 순서를 지켜야 한다. 받는 쪽에서 그 순서가
+    // 유지되는지는 키 설정에 달려 있고, 그게 실험 대상이다.
+    it('생성 뒤 세 단계를 순서대로 보낸다', async () => {
+      const { order } = await service.createOrder({});
+      dispatcher.dispatch.mockClear();
+
+      const result = await service.dispatchLifecycle(order.orderId);
+
+      expect(result.steps.map((s) => s.eventType)).toEqual([
+        OrderEventType.INVENTORY_RESERVED,
+        OrderEventType.PAYMENT_APPROVED,
+        OrderEventType.SHIPMENT_STARTED,
+      ]);
+    });
+
+    // CREATED 를 다시 보내면 생성 이벤트가 두 번 나가 중복 집계가 틀어진다.
+    it('생성 이벤트를 다시 보내지 않는다', async () => {
+      const { order } = await service.createOrder({});
+      dispatcher.dispatch.mockClear();
+
+      await service.dispatchLifecycle(order.orderId);
+
+      const sent = dispatcher.dispatch.mock.calls.map((c) => c[0].eventType);
+      expect(sent).not.toContain(OrderEventType.CREATED);
+      expect(sent).toHaveLength(3);
+    });
+
+    it('단계마다 주문 상태를 올린다', async () => {
+      const { order } = await service.createOrder({});
+
+      await service.dispatchLifecycle(order.orderId);
+
+      expect(store.updateStatus.mock.calls.map((c) => c[1])).toEqual([
+        OrderStatus.INVENTORY_RESERVED,
+        OrderStatus.PAYMENT_APPROVED,
+        OrderStatus.SHIPPED,
+      ]);
+    });
+
+    it('없는 주문이면 에러를 낸다', async () => {
+      await expect(service.dispatchLifecycle('ord-없음')).rejects.toThrow(
+        /주문을 찾을 수 없습니다/,
+      );
+    });
+
+    it('대량 발행에서 건수를 세어 보고한다', async () => {
+      const result = await service.createWithLifecycle(3);
+
+      expect(result.requested).toBe(3);
+      expect(result.completed).toBe(3);
+      expect(result.failed).toBe(0);
+      expect(result.orderIds).toHaveLength(3);
+    });
+
+    // 조용히 넘기면 중간에 끊긴 주문이 있어도 "완료" 로 보인다.
+    it('일부가 실패하면 실패 건수로 드러낸다', async () => {
+      let call = 0;
+      dispatcher.dispatch.mockImplementation(async () => {
+        call += 1;
+        // 두 번째 주문의 흐름 발행에서 터뜨린다.
+        if (call === 6) throw new Error('발행 실패');
+        return {
+          destination: 'orders.created',
+          partition: 0,
+          offset: String(call),
+          key: 'k',
+        };
+      });
+
+      const result = await service.createWithLifecycle(3);
+
+      expect(result.failed).toBeGreaterThan(0);
+      expect(result.completed + result.failed).toBe(3);
+      expect(result.errors.length).toBeGreaterThan(0);
+    });
+  });
+  describe('파티션 흩어짐 집계', () => {
+    beforeEach(() => {
+      store.findOrder.mockImplementation(async (orderId: string) => {
+        return savedOrders.find((o) => o.orderId === orderId) ?? null;
+      });
+    });
+
+    // 키를 쓰면 같은 주문의 단계가 한 파티션에 모인다.
+    it('한 파티션에 모이면 모인 것으로 센다', async () => {
+      dispatcher.dispatch.mockResolvedValue({
+        destination: 'orders.created',
+        partition: 2,
+        offset: '1',
+        key: 'ord-1',
+      });
+
+      const result = await service.createWithLifecycle(2);
+
+      expect(result.scatter.singlePartition).toBe(2);
+      expect(result.scatter.multiPartition).toBe(0);
+      expect(result.scatter.avgPartitionsPerOrder).toBe(1);
+    });
+
+    // 키를 빼면 파티션이 흩어져 받는 쪽 순서가 뒤바뀔 수 있다.
+    it('여러 파티션으로 갈라지면 흩어진 것으로 센다', async () => {
+      let n = 0;
+      dispatcher.dispatch.mockImplementation(async () => ({
+        destination: 'orders.created',
+        partition: n++ % 6,
+        offset: String(n),
+        key: null,
+      }));
+
+      const result = await service.createWithLifecycle(2);
+
+      expect(result.scatter.multiPartition).toBe(2);
+      expect(result.scatter.singlePartition).toBe(0);
+      expect(result.scatter.avgPartitionsPerOrder).toBeGreaterThan(1);
+    });
+
+    /**
+     * 파티션이라는 개념이 없는 통로(프로세스 안의 큐)는 null 을 준다.
+     * 0 으로 치면 "0번 파티션에 모였다" 로 읽혀 결과가 뒤집힌다.
+     */
+    it('파티션을 모르는 통로는 셈에서 빼고 평균을 null 로 둔다', async () => {
+      dispatcher.dispatch.mockResolvedValue({
+        destination: 'memory://orders',
+        partition: null,
+        offset: null,
+        key: null,
+      });
+
+      const result = await service.createWithLifecycle(2);
+
+      expect(result.scatter.singlePartition).toBe(0);
+      expect(result.scatter.multiPartition).toBe(0);
+      expect(result.scatter.avgPartitionsPerOrder).toBeNull();
+    });
+
+    it('눈으로 볼 샘플을 함께 돌려준다', async () => {
+      const result = await service.createWithLifecycle(5);
+
+      expect(result.samples).toHaveLength(3);
+      expect(result.samples[0].steps).toHaveLength(3);
+    });
+  });
 });

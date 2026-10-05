@@ -1,4 +1,8 @@
-import { readKafkaBrokersEnv, readPositiveIntEnv } from '../../queue/utils/env';
+import {
+  readKafkaBrokersEnv,
+  readNonNegativeIntEnv,
+  readPositiveIntEnv,
+} from '../../queue/utils/env';
 import { ORDER_TOPICS } from '../order-events';
 
 /**
@@ -67,18 +71,6 @@ function parseCommitMode(raw: string | undefined): CommitMode {
   throw new Error(
     `CONSUMER_COMMIT_MODE 는 after-process 또는 before-process 여야 합니다. 현재 값: ${raw}`,
   );
-}
-
-/** 0 이상 정수 환경변수. readPositiveIntEnv 는 0을 허용하지 않아 따로 둔다. */
-function readNonNegativeIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${name} 는 0 이상 정수여야 합니다. 현재 값: ${raw}`);
-  }
-  return parsed;
 }
 
 function parseTopics(raw: string | undefined): string[] {

@@ -7,6 +7,23 @@ export function readPositiveIntEnv(name: string, fallback: number): number {
 }
 
 /**
+ * 0 이상 정수 환경변수. readPositiveIntEnv 는 0을 허용하지 않아 따로 둔다.
+ *
+ * 형식이 틀리면 기본값으로 흡수하지 않고 예외를 던진다.
+ * 지연·건수 같은 실험 조건이 조용히 다른 값으로 돌면 결과를 못 읽는다.
+ */
+export function readNonNegativeIntEnv(name: string, fallback = 0): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${name} 는 0 이상 정수여야 합니다. 현재 값: ${raw}`);
+  }
+  return parsed;
+}
+
+/**
  * 반드시 있어야 하는 환경변수를 읽는다. 없거나 비어 있으면 예외.
  *
  * 접속 정보(호스트·계정·비밀번호 등)에 기본값을 두면, 값이 빠졌을 때

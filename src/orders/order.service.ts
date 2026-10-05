@@ -14,7 +14,12 @@ import {
   ORDER_STORE,
   OrderStore,
 } from './order-store.interface';
-import { OrderPublisher, PublishResult } from './order-publisher';
+import { OrderPublisher } from './order-publisher';
+import {
+  DispatchResult,
+  ORDER_DISPATCHER,
+  OrderDispatcher,
+} from './dispatch/order-dispatcher.interface';
 
 export interface CreateOrderInput {
   userId?: string;
@@ -23,7 +28,7 @@ export interface CreateOrderInput {
 
 export interface CreateOrderResult {
   order: Order;
-  dispatch: PublishResult;
+  dispatch: DispatchResult;
 }
 
 export interface BulkOrderResult {
@@ -48,6 +53,10 @@ export class OrderService {
 
   constructor(
     @Inject(ORDER_STORE) private readonly store: OrderStore,
+    @Inject(ORDER_DISPATCHER)
+    private readonly dispatcher: OrderDispatcher,
+    // 카프카 전용 설정(멱등성·acks·키 사용)을 현황에 보여주기 위해 함께 받는다.
+    // 내보내는 일은 dispatcher 가 하고, 이쪽은 설정 조회용이다.
     private readonly publisher: OrderPublisher,
   ) {}
 
@@ -71,7 +80,7 @@ export class OrderService {
 
     // 저장이 끝난 뒤 발행한다. 발행이 실패하면 주문은 남고 이벤트만 없는 상태가 되는데,
     // 그 어긋남 자체가 카프카 실험에서 볼 거리다(발행 실패 시 어떻게 복구하는가).
-    const dispatch = await this.publisher.publish(
+    const dispatch = await this.dispatcher.dispatch(
       this.toPayload(order, OrderEventType.CREATED),
     );
 
@@ -153,6 +162,11 @@ export class OrderService {
       duplicateGroups: duplicates.length,
       // 중복 처리된 총 건수(원본 1건을 뺀 초과분)
       duplicateExtra: duplicates.reduce((sum, d) => sum + (d.count - 1), 0),
+      // 어떤 수단으로 내보내는 중인지. 측정 결과를 읽을 때 조건이 함께 보여야 한다.
+      dispatcher: {
+        name: this.dispatcher.name,
+        ready: this.dispatcher.isReady(),
+      },
       producer: {
         connected: this.publisher.isConnected(),
         idempotent: this.publisher.getConfig().idempotent,

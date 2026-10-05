@@ -2,10 +2,12 @@ import { OrderService } from './order.service';
 import { OrderPublisher } from './order-publisher';
 import { OrderStore } from './order-store.interface';
 import { Order, OrderEventType, OrderStatus } from './order-events';
+import { OrderDispatcher } from './dispatch/order-dispatcher.interface';
 
 describe('OrderService', () => {
   let store: jest.Mocked<OrderStore>;
   let publisher: jest.Mocked<OrderPublisher>;
+  let dispatcher: jest.Mocked<OrderDispatcher>;
   let service: OrderService;
 
   const savedOrders: Order[] = [];
@@ -47,7 +49,19 @@ describe('OrderService', () => {
       }),
     } as unknown as jest.Mocked<OrderPublisher>;
 
-    service = new OrderService(store, publisher);
+    // 내보내는 일은 통로가 맡는다. 서비스는 무슨 수단인지 모른다.
+    dispatcher = {
+      name: 'kafka',
+      isReady: jest.fn().mockReturnValue(true),
+      dispatch: jest.fn().mockResolvedValue({
+        destination: 'orders.created',
+        partition: 0,
+        offset: '1',
+        key: 'ord-1',
+      }),
+    } as unknown as jest.Mocked<OrderDispatcher>;
+
+    service = new OrderService(store, dispatcher, publisher);
   });
 
   describe('주문 생성', () => {
@@ -55,10 +69,10 @@ describe('OrderService', () => {
       const result = await service.createOrder({ userId: 'user-9' });
 
       expect(store.saveOrder).toHaveBeenCalledTimes(1);
-      expect(publisher.publish).toHaveBeenCalledTimes(1);
+      expect(dispatcher.dispatch).toHaveBeenCalledTimes(1);
       expect(result.order.userId).toBe('user-9');
       expect(result.order.status).toBe(OrderStatus.CREATED);
-      expect(result.dispatch.topic).toBe('orders.created');
+      expect(result.dispatch.destination).toBe('orders.created');
     });
 
     it('품목 금액을 합쳐 주문 금액을 낸다', async () => {
@@ -82,13 +96,13 @@ describe('OrderService', () => {
     it('발행 본문에 생성 이벤트 종류를 담는다', async () => {
       await service.createOrder({});
 
-      const payload = publisher.publish.mock.calls[0][0];
+      const payload = dispatcher.dispatch.mock.calls[0][0];
       expect(payload.eventType).toBe(OrderEventType.CREATED);
     });
 
     // 발행 실패를 삼키면 주문은 있는데 이벤트가 없는 상태를 아무도 모른다.
     it('발행이 실패하면 예외를 그대로 올린다', async () => {
-      publisher.publish.mockRejectedValue(new Error('브로커 연결 끊김'));
+      dispatcher.dispatch.mockRejectedValue(new Error('브로커 연결 끊김'));
 
       await expect(service.createOrder({})).rejects.toThrow(/브로커 연결 끊김/);
     });
@@ -103,21 +117,21 @@ describe('OrderService', () => {
 
   describe('대량 생성', () => {
     it('요청한 건수만큼 만들고 파티션 분포를 돌려준다', async () => {
-      publisher.publish
+      dispatcher.dispatch
         .mockResolvedValueOnce({
-          topic: 't',
+          destination: 't',
           partition: 0,
           offset: '1',
           key: 'k',
         })
         .mockResolvedValueOnce({
-          topic: 't',
+          destination: 't',
           partition: 1,
           offset: '2',
           key: 'k',
         })
         .mockResolvedValueOnce({
-          topic: 't',
+          destination: 't',
           partition: 0,
           offset: '3',
           key: 'k',
@@ -134,16 +148,16 @@ describe('OrderService', () => {
     // 개별 실패를 관용하되 건수는 세서 보고해야 한다.
     // 조용히 넘기면 100건 중 40건이 실패해도 "완료" 로 보인다.
     it('일부 실패해도 계속 진행하고 실패 건수를 보고한다', async () => {
-      publisher.publish
+      dispatcher.dispatch
         .mockResolvedValueOnce({
-          topic: 't',
+          destination: 't',
           partition: 0,
           offset: '1',
           key: 'k',
         })
         .mockRejectedValueOnce(new Error('일시 장애'))
         .mockResolvedValueOnce({
-          topic: 't',
+          destination: 't',
           partition: 0,
           offset: '2',
           key: 'k',
@@ -157,7 +171,7 @@ describe('OrderService', () => {
     });
 
     it('전량 실패해도 건수로 드러난다', async () => {
-      publisher.publish.mockRejectedValue(new Error('브로커 다운'));
+      dispatcher.dispatch.mockRejectedValue(new Error('브로커 다운'));
 
       const result = await service.createBulk(5);
 
@@ -167,7 +181,7 @@ describe('OrderService', () => {
     });
 
     it('오류 목록은 앞의 몇 건만 남긴다', async () => {
-      publisher.publish.mockRejectedValue(new Error('실패'));
+      dispatcher.dispatch.mockRejectedValue(new Error('실패'));
 
       const result = await service.createBulk(20);
 

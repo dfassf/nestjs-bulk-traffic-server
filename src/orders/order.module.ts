@@ -21,6 +21,10 @@ import {
   inspectorConfigFromEnv,
 } from './lab/kafka-inspector';
 import { readWorkerEngineEnv } from '../queue/utils/env';
+import { ORDER_DISPATCHER } from './dispatch/order-dispatcher.interface';
+import { KafkaOrderDispatcher } from './dispatch/kafka-order.dispatcher';
+import { MemoryOrderDispatcher } from './dispatch/memory-order.dispatcher';
+import { readDispatcherModeEnv } from './dispatch/dispatcher-mode';
 
 /**
  * 카프카 실험용 주문 도메인.
@@ -59,6 +63,18 @@ import { readWorkerEngineEnv } from '../queue/utils/env';
         await store.init();
         return store;
       },
+    },
+    KafkaOrderDispatcher,
+    MemoryOrderDispatcher,
+    {
+      // 주문 이벤트를 무엇으로 내보낼지 모듈이 정한다.
+      // 주문 서비스는 통로 인터페이스만 알고 수단은 모른다.
+      provide: ORDER_DISPATCHER,
+      useFactory: (
+        kafka: KafkaOrderDispatcher,
+        memory: MemoryOrderDispatcher,
+      ) => (readDispatcherModeEnv() === 'memory' ? memory : kafka),
+      inject: [KafkaOrderDispatcher, MemoryOrderDispatcher],
     },
   ],
   exports: [OrderService],
